@@ -1,7 +1,22 @@
+/**
+ * @file    wackos_gfx.c
+ * @author  IAmWack
+ * @brief   Слой рисования Wack-OS: примитивы, текст, цвет — без знания о железе.
+ *
+ * Часть components/wackos_gfx (см. wackos_gfx.h). Всё рисуется в общий
+ * кадровый буфер в ОЗУ; "показать" его на экране — отдельный шаг,
+ * который делает display.c на master и sim_window.c в симуляторе.
+ * Поэтому картинка на ноутбуке пиксель-в-пиксель совпадает с тем, что
+ * потом на ST7789 — весь рендер общий, различается только вывод.
+ */
 #include "wackos_gfx.h"
 
 #include <math.h>
 #include <string.h>
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 /*
  * Кадровый буфер. 172*320*2 = 110 КБ — на ESP32-S3 это спокойно ложится
@@ -12,13 +27,20 @@
  */
 static uint16_t s_fb[GFX_W * GFX_H];
 
+/**
+ * @brief   Указатель на кадровый буфер.
+ * @return  GFX_W * GFX_H значений RGB565, по строкам.
+ */
 uint16_t *gfx_framebuffer(void)
 {
     return s_fb;
 }
 
-/* ---- Цвет ---- */
+/* ============================================================================
+ *  Static helpers — цвет
+ * ============================================================================ */
 
+/** @brief  Разложить RGB565 на компоненты r(0..31)/g(0..63)/b(0..31). */
 static inline void rgb565_split(uint16_t c, int *r, int *g, int *b)
 {
     *r = (c >> 11) & 0x1F;
@@ -26,11 +48,19 @@ static inline void rgb565_split(uint16_t c, int *r, int *g, int *b)
     *b = c & 0x1F;
 }
 
+/** @brief  Собрать RGB565 обратно из компонент r/g/b. */
 static inline uint16_t rgb565_join(int r, int g, int b)
 {
     return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
+/**
+ * @brief   Смешать два цвета RGB565.
+ * @param   a  Цвет при t=0.
+ * @param   b  Цвет при t=255.
+ * @param   t  Коэффициент смешивания 0..255.
+ * @return  Смешанный цвет.
+ */
 uint16_t gfx_mix(uint16_t a, uint16_t b, uint8_t t)
 {
     int ar, ag, ab, br, bg, bb;
@@ -41,18 +71,23 @@ uint16_t gfx_mix(uint16_t a, uint16_t b, uint8_t t)
                        ab + ((bb - ab) * t) / 255);
 }
 
+/** @brief  Осветлить цвет к белому (amount 0..255). */
 uint16_t gfx_lighten(uint16_t c, uint8_t amount)
 {
     return gfx_mix(c, 0xFFFF, amount);
 }
 
+/** @brief  Затемнить цвет к чёрному (amount 0..255). */
 uint16_t gfx_darken(uint16_t c, uint8_t amount)
 {
     return gfx_mix(c, 0x0000, amount);
 }
 
-/* ---- Примитивы ---- */
+/* ============================================================================
+ *  Public API — примитивы
+ * ============================================================================ */
 
+/** @brief  Залить весь кадровый буфер одним цветом. */
 void gfx_clear(uint16_t color)
 {
     for (int i = 0; i < GFX_W * GFX_H; i++) {
@@ -60,6 +95,12 @@ void gfx_clear(uint16_t color)
     }
 }
 
+/**
+ * @brief   Положить один пиксель с альфа-смешиванием.
+ * @param   x, y   Координаты; за пределами экрана — no-op.
+ * @param   color  Цвет RGB565.
+ * @param   alpha  Непрозрачность 0..255 (0 — no-op).
+ */
 void gfx_pixel(int x, int y, uint16_t color, uint8_t alpha)
 {
     if (x < 0 || y < 0 || x >= GFX_W || y >= GFX_H || alpha == 0) {
@@ -69,6 +110,7 @@ void gfx_pixel(int x, int y, uint16_t color, uint8_t alpha)
     *p = (alpha == 255) ? color : gfx_mix(*p, color, alpha);
 }
 
+/** @brief  Закрашенный прямоугольник (x,y,w,h) цветом color, с отсечением по экрану. */
 void gfx_fill_rect(int x, int y, int w, int h, uint16_t color, uint8_t alpha)
 {
     if (w <= 0 || h <= 0 || alpha == 0) {
@@ -87,6 +129,7 @@ void gfx_fill_rect(int x, int y, int w, int h, uint16_t color, uint8_t alpha)
     }
 }
 
+/** @brief  Вертикальный градиент по всему экрану: top сверху (y0), bottom снизу (y1). */
 void gfx_gradient_v(int y0, int y1, uint16_t top, uint16_t bottom)
 {
     if (y1 <= y0) {
@@ -106,8 +149,10 @@ void gfx_gradient_v(int y0, int y1, uint16_t top, uint16_t bottom)
     }
 }
 
-/*
- * Покрытие пикселя скруглённым прямоугольником, 0..255.
+/**
+ * @brief   Покрытие пикселя скруглённым прямоугольником, для сглаживания края.
+ * @return  Покрытие 0..255.
+ *
  * Считаем расстояние до "скелета" фигуры — внутри прямых участков оно
  * нулевое, у углов работает как окружность. Полпикселя мягкости по краю
  * и даёт сглаживание, без него углы выглядят лесенкой.
@@ -133,11 +178,13 @@ static uint8_t round_rect_cov(float px, float py, float x, float y,
     return (uint8_t)(cov * 255.0f);
 }
 
+/** @brief  Скруглённый прямоугольник со сглаженными углами, залитый одним цветом. */
 void gfx_round_rect(int x, int y, int w, int h, int r, uint16_t color, uint8_t alpha)
 {
     gfx_round_rect_gradient(x, y, w, h, r, color, color, alpha);
 }
 
+/** @brief  Скруглённый прямоугольник с вертикальным градиентом заливки (для "объёмных" плашек). */
 void gfx_round_rect_gradient(int x, int y, int w, int h, int r,
                              uint16_t top, uint16_t bottom, uint8_t alpha)
 {
@@ -165,6 +212,7 @@ void gfx_round_rect_gradient(int x, int y, int w, int h, int r,
     }
 }
 
+/** @brief  Контур скруглённого прямоугольника толщиной t, растущей внутрь. */
 void gfx_round_rect_outline(int x, int y, int w, int h, int r, int t,
                             uint16_t color, uint8_t alpha)
 {
@@ -198,6 +246,7 @@ void gfx_round_rect_outline(int x, int y, int w, int h, int r, int t,
     }
 }
 
+/** @brief  Закрашенная окружность радиусом r со сглаженным краем. */
 void gfx_circle(int cx, int cy, int r, uint16_t color, uint8_t alpha)
 {
     if (r <= 0 || alpha == 0) {
@@ -217,6 +266,7 @@ void gfx_circle(int cx, int cy, int r, uint16_t color, uint8_t alpha)
     }
 }
 
+/** @brief  Закрашенный эллипс (rx, ry — полуоси) — основа всего, из чего собран Астольфо. */
 void gfx_ellipse(int cx, int cy, int rx, int ry, uint16_t color, uint8_t alpha)
 {
     if (rx <= 0 || ry <= 0 || alpha == 0) {
@@ -240,6 +290,7 @@ void gfx_ellipse(int cx, int cy, int rx, int ry, uint16_t color, uint8_t alpha)
     }
 }
 
+/** @brief  Дуга окружности толщиной t; углы a0/a1 в градусах, 0 — вправо, против часовой. */
 void gfx_arc(int cx, int cy, int r, int t, int a0, int a1, uint16_t color, uint8_t alpha)
 {
     if (r <= 0 || t <= 0 || alpha == 0) {
@@ -279,6 +330,7 @@ void gfx_arc(int cx, int cy, int r, int t, int a0, int a1, uint16_t color, uint8
     }
 }
 
+/** @brief  Отрезок толщиной w со скруглёнными концами. */
 void gfx_line(int x0, int y0, int x1, int y1, int w, uint16_t color, uint8_t alpha)
 {
     if (w <= 0 || alpha == 0) {
@@ -308,7 +360,9 @@ void gfx_line(int x0, int y0, int x1, int y1, int w, uint16_t color, uint8_t alp
     }
 }
 
-/* ---- Милота ---- */
+/* ============================================================================
+ *  Public API — милота (декоративные фигуры для Астольфо)
+ * ============================================================================ */
 
 /*
  * Сердце — по классической неявной кривой (x^2+y^2-1)^3 - x^2*y^3 = 0.
@@ -321,6 +375,7 @@ static inline bool heart_inside(float u, float v)
     return (a * a * a - u * u * v * v * v) <= 0.0f;
 }
 
+/** @brief  Сердечко высотой h с центром в (cx, cy). */
 void gfx_heart(int cx, int cy, int h, uint16_t color, uint8_t alpha)
 {
     if (h <= 0 || alpha == 0) {
@@ -352,6 +407,7 @@ void gfx_heart(int cx, int cy, int h, uint16_t color, uint8_t alpha)
  * Искорка — астроида |u|^(2/3) + |v|^(2/3) <= 1: четыре тонких луча
  * с пухлой серединкой, ровно как блик в аниме-глазах.
  */
+/** @brief  Четырёхлучевая искорка/блик радиусом r. */
 void gfx_sparkle(int cx, int cy, int r, uint16_t color, uint8_t alpha)
 {
     if (r <= 0 || alpha == 0) {
@@ -393,6 +449,7 @@ static bool point_in_tri(float px, float py,
     return !(neg && pos);
 }
 
+/** @brief  Закрашенный треугольник по трём вершинам, со сглаженным краем. */
 void gfx_triangle(int x0, int y0, int x1, int y1, int x2, int y2,
                   uint16_t color, uint8_t alpha)
 {
@@ -425,6 +482,7 @@ void gfx_triangle(int x0, int y0, int x1, int y1, int x2, int y2,
  * не эллипсы — на 16-20 пикселях эллипсы сливаются в бесформенное
  * пятно, а острые петли читаются даже такими мелкими.
  */
+/** @brief  Бантик шириной w (две петли + узелок), для Астольфо. */
 void gfx_bow(int cx, int cy, int w, uint16_t color, uint8_t alpha)
 {
     if (w <= 0 || alpha == 0) {
@@ -461,6 +519,10 @@ void gfx_bow(int cx, int cy, int w, uint16_t color, uint8_t alpha)
     gfx_circle(cx, cy, (int)knot < 2 ? 2 : (int)knot, gfx_lighten(color, 60), alpha);
 }
 
+/**
+ * @brief   Кошачье ушко: треугольник с закруглённой вершиной, внутри — розовое.
+ * @param   flip  Зеркалит треугольник (левое/правое ушко).
+ */
 void gfx_cat_ear(int x, int y, int w, int h, bool flip,
                  uint16_t outer, uint16_t inner, uint8_t alpha)
 {
@@ -499,6 +561,7 @@ void gfx_cat_ear(int x, int y, int w, int h, bool flip,
     }
 }
 
+/** @brief  Затемнить весь кадр к чёрному (level 0..255, 255 — без изменений). */
 void gfx_dim(uint8_t level)
 {
     if (level >= 255) {
@@ -509,9 +572,11 @@ void gfx_dim(uint8_t level)
     }
 }
 
-/* ---- Текст ---- */
+/* ============================================================================
+ *  Public API — текст (UTF-8)
+ * ============================================================================ */
 
-/* Минимальный UTF-8 декодер: хватает ASCII + кириллицы (2 байта). */
+/** @brief  Минимальный UTF-8 декодер: хватает ASCII + кириллицы (2 байта). Возвращает указатель после символа. */
 static const char *utf8_next(const char *s, uint32_t *out_cp)
 {
     unsigned char c = (unsigned char)*s;
@@ -532,6 +597,7 @@ static const char *utf8_next(const char *s, uint32_t *out_cp)
     return s + 1;
 }
 
+/** @brief  Отрисовать один глиф (битмап 4bpp) в позиции (x, y). */
 static void draw_glyph(const wackos_font_t *font, const wackos_glyph_t *g,
                        int x, int y, uint16_t color, uint8_t alpha)
 {
@@ -555,6 +621,7 @@ static void draw_glyph(const wackos_font_t *font, const wackos_glyph_t *g,
     }
 }
 
+/** @brief  Ширина строки в пикселях при отрисовке данным шрифтом. */
 int gfx_text_width(const wackos_font_t *font, const char *utf8)
 {
     if (!font || !utf8) {
@@ -572,6 +639,7 @@ int gfx_text_width(const wackos_font_t *font, const char *utf8)
     return w;
 }
 
+/** @brief  Нарисовать строку UTF-8 шрифтом font, начиная с точки (x, y). */
 void gfx_text(const wackos_font_t *font, int x, int y, const char *utf8,
               uint16_t color, uint8_t alpha)
 {
@@ -590,12 +658,14 @@ void gfx_text(const wackos_font_t *font, int x, int y, const char *utf8,
     }
 }
 
+/** @brief  Текст, отцентрованный по горизонтали относительно cx. */
 void gfx_text_center(const wackos_font_t *font, int cx, int y, const char *utf8,
                      uint16_t color, uint8_t alpha)
 {
     gfx_text(font, cx - gfx_text_width(font, utf8) / 2, y, utf8, color, alpha);
 }
 
+/** @brief  Текст с мягкой тенью на 1px вниз — так буквы читаются на пёстром фоне. */
 void gfx_text_shadow(const wackos_font_t *font, int x, int y, const char *utf8,
                      uint16_t color, uint16_t shadow, uint8_t alpha)
 {
@@ -603,6 +673,10 @@ void gfx_text_shadow(const wackos_font_t *font, int x, int y, const char *utf8,
     gfx_text(font, x, y, utf8, color, alpha);
 }
 
+/**
+ * @brief   Нарисовать текст, обрезав его многоточием по ширине max_w.
+ * @return  Фактическая ширина нарисованного (с учётом "...", если обрезано).
+ */
 int gfx_text_ellipsis(const wackos_font_t *font, int x, int y, const char *utf8,
                       int max_w, uint16_t color, uint8_t alpha)
 {

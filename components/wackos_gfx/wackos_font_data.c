@@ -1,7 +1,18 @@
-/*
+/**
+ * @file    wackos_font_data.c
+ * @author  IAmWack
+ * @brief   Таблицы глифов и битмапов растровых шрифтов Wack-OS.
+ *
  * СГЕНЕРИРОВАННЫЙ ФАЙЛ — не править руками.
- * Источник: tools/gen_font.py (URW Gothic Demi + DejaVu Sans Bold
- * для кириллицы). Перегенерировать: python3 tools/gen_font.py
+ * Источник: tools/gen_font.py (URW Gothic Demi + DejaVu Sans Bold для
+ * кириллицы). Перегенерировать: `python3 tools/gen_font.py`.
+ *
+ * Структура на каждое начертание (small/body/title):
+ *  - `..._bitmaps[]`  — блоб 4bpp-битмапов всех глифов подряд, без разделителей;
+ *  - `..._glyphs[]`   — таблица wackos_glyph_t (cp, offset, w, h, left, top,
+ *                       advance), отсортированная по cp, см. wackos_font.h;
+ *  - `wackos_font_*`  — итоговая wackos_font_t, которую видит остальной код
+ *                       (объявлена в wackos_font.h).
  */
 #include "wackos_font.h"
 

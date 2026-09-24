@@ -1,6 +1,7 @@
-/*
- * Слой протокола Wack-OS. Сборка/разбор кадров REQ/RES/EVT,
- * контрольная сумма, тайм-ауты и ретраи.
+/**
+ * @file    wackos_protocol.h
+ * @author  IAmWack
+ * @brief   Слой протокола Wack-OS. Сборка/разбор кадров REQ/RES/EVT, контрольная сумма, тайм-ауты и ретраи.
  *
  * Формат кадра и коды ошибок описаны в docs/PROTOCOL.md — этот файл
  * реализует именно тот текстовый протокол, ничего от себя не добавляя.
@@ -15,6 +16,10 @@
 #include <stdint.h>
 #include "wackos_transport.h"
 
+/* ============================================================================
+ *  Defines
+ * ============================================================================ */
+
 #define WACKOS_PROTO_VERSION   "1"
 
 #define WACKOS_ADDR_BROADCAST  0
@@ -23,6 +28,10 @@
 #define WACKOS_FIELD_MAX       24
 #define WACKOS_PAYLOAD_MAX     128
 #define WACKOS_LINE_MAX        (8 + WACKOS_FIELD_MAX + WACKOS_PAYLOAD_MAX)
+
+/* ============================================================================
+ *  Types
+ * ============================================================================ */
 
 typedef enum {
     WACKOS_ROLE_REQ = 0,
@@ -64,6 +73,10 @@ typedef enum {
 #define WACKOS_ERR_NOT_SUPPORTED  "E_NOT_SUPPORTED"
 #define WACKOS_ERR_INTERNAL       "E_INTERNAL"
 #define WACKOS_ERR_CRC            "E_CRC"
+
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
 
 /* Инициализация слоя протокола конкретным транспортом. */
 void wackos_proto_init(const wackos_transport_t *transport);

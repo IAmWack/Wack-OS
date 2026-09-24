@@ -1,3 +1,13 @@
+/**
+ * @file    wackos_protocol.c
+ * @author  IAmWack
+ * @brief   Реализация текстового UART-протокола Wack-OS (кадры REQ/RES/EVT).
+ *
+ * Общий слой для master и slave (components/wackos_protocol). Ничего не
+ * знает про железо — работает только через интерфейс транспорта
+ * (wackos_transport_t, см. wackos_transport.h). Формат кадров и коды
+ * ошибок — см. docs/PROTOCOL.md.
+ */
 #include "wackos_protocol.h"
 
 #include <stdio.h>
@@ -8,6 +18,10 @@
                          * "не совсем платформо-независимая" зависимость,
                          * но это системный сервис ESP-IDF, а не конкретное
                          * железо — есть на любом чипе Espressif. */
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static const wackos_transport_t *s_transport = NULL;
 
@@ -21,13 +35,20 @@ static uint16_t s_next_evt_seq = 0; /* отдельный счётчик seq д�
 static wackos_frame_t s_pending_event;
 static bool s_has_pending_event = false;
 
-/* ---------------------------------------------------------------- */
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
 
+/**
+ * @brief   Текущее время в миллисекундах (монотонное, для тайм-аутов).
+ * @return  Миллисекунды с произвольной точки отсчёта.
+ */
 static inline uint32_t now_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+/** @brief  XOR-контрольная сумма len байт data (см. поле CSUM в docs/PROTOCOL.md). */
 static uint8_t compute_checksum(const char *data, size_t len)
 {
     uint8_t csum = 0;
@@ -37,6 +58,7 @@ static uint8_t compute_checksum(const char *data, size_t len)
     return csum;
 }
 
+/** @brief  Имя роли кадра для сериализации ("REQ"/"RES"/"EVT"). */
 static const char *role_to_str(wackos_role_t role)
 {
     switch (role) {
@@ -47,6 +69,7 @@ static const char *role_to_str(wackos_role_t role)
     }
 }
 
+/** @brief  Обратный разбор роли кадра из строки. @return true, если распознано. */
 static bool str_to_role(const char *s, wackos_role_t *out)
 {
     if (strcmp(s, "REQ") == 0) { *out = WACKOS_ROLE_REQ; return true; }
@@ -55,11 +78,17 @@ static bool str_to_role(const char *s, wackos_role_t *out)
     return false;
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/** @brief  Задать собственный адрес (см. пояснение в wackos_protocol.h). */
 void wackos_proto_set_address(uint8_t addr)
 {
     s_own_addr = addr;
 }
 
+/** @brief  Инициализация слоя протокола конкретным транспортом. Сбрасывает счётчики seq. */
 void wackos_proto_init(const wackos_transport_t *transport)
 {
     s_transport = transport;
@@ -68,8 +97,13 @@ void wackos_proto_init(const wackos_transport_t *transport)
     s_has_pending_event = false;
 }
 
-/* ---------------------------------------------------------------- */
-
+/**
+ * @brief   Собрать кадр в текстовую строку протокола (с CSUM и '\n').
+ * @param   frame     Кадр для сериализации.
+ * @param   out       Буфер для результата.
+ * @param   out_size  Размер буфера out.
+ * @return  Длина строки без завершающего нуля, либо 0 при ошибке (не влез).
+ */
 size_t wackos_frame_build(const wackos_frame_t *frame, char *out, size_t out_size)
 {
     char core[WACKOS_LINE_MAX];
@@ -90,6 +124,18 @@ size_t wackos_frame_build(const wackos_frame_t *frame, char *out, size_t out_siz
     return (size_t)full_len;
 }
 
+/**
+ * @brief   Разобрать строку кадра (без завершающего '\n') в frame.
+ * @param   line      Строка кадра, без завершающего '\n'.
+ * @param   line_len  Длина line.
+ * @param   frame     Куда записать разобранные поля.
+ * @return  WACKOS_PARSE_OK, WACKOS_PARSE_CRC_FAIL (см. ниже) или
+ *          WACKOS_PARSE_MALFORMED, если строку не удалось разобрать вовсе.
+ *
+ * При WACKOS_PARSE_CRC_FAIL frame всё равно заполнен best-effort — нужно,
+ * чтобы отправитель ошибки (wackos_proto_receive_request) мог ответить
+ * E_CRC с тем же ADDR/SEQ, что были в исходном кадре.
+ */
 wackos_parse_result_t wackos_frame_parse(const char *line, size_t line_len, wackos_frame_t *frame)
 {
     /* Ожидаем строку без завершающего '\n' (транспорт его отрезает). */
@@ -148,8 +194,7 @@ wackos_parse_result_t wackos_frame_parse(const char *line, size_t line_len, wack
     return crc_ok ? WACKOS_PARSE_OK : WACKOS_PARSE_CRC_FAIL;
 }
 
-/* ---------------------------------------------------------------- */
-
+/** @brief  Собрать и отправить кадр через текущий транспорт (no-op, если транспорт не задан). */
 static void send_frame(const wackos_frame_t *frame)
 {
     char line[WACKOS_LINE_MAX];
@@ -181,6 +226,22 @@ static wackos_parse_result_t read_frame(wackos_frame_t *out, uint32_t timeout_ms
     return wackos_frame_parse((const char *)raw, len, out);
 }
 
+/* ============================================================================
+ *  Public API — сторона master: синхронный запрос-ответ
+ * ============================================================================ */
+
+/**
+ * @brief   Отправить REQ и дождаться RES с тем же seq (с ретраями).
+ * @param   addr          Адрес получателя (slave).
+ * @param   cmd           Имя команды (например "SYS_PING").
+ * @param   args          Payload запроса, либо NULL/"" для "-".
+ * @param   out_response  Куда положить разобранный ответ (может быть NULL).
+ * @param   timeout_ms    Тайм-аут ожидания одной попытки, мс.
+ * @param   retries       Сколько дополнительных попыток сделать после первой.
+ * @return  WACKOS_RES_OK/WACKOS_RES_REMOTE_ERR по полю RES, либо
+ *          WACKOS_RES_TIMEOUT, если не дождались за все попытки.
+ *          Дефолты timeout/retries — см. docs/PROTOCOL.md.
+ */
 wackos_status_t wackos_proto_request(uint8_t addr, const char *cmd, const char *args,
                                       wackos_frame_t *out_response,
                                       uint32_t timeout_ms, uint8_t retries)
@@ -232,6 +293,12 @@ wackos_status_t wackos_proto_request(uint8_t addr, const char *cmd, const char *
     return WACKOS_RES_TIMEOUT;
 }
 
+/**
+ * @brief   Неблокирующая проверка асинхронного EVT-кадра.
+ * @param   out_event   Куда положить событие, если оно было.
+ * @param   timeout_ms  Сколько ждать новый кадр, если нет отложенного.
+ * @return  true, если событие получено (сразу из буфера или дождались).
+ */
 bool wackos_proto_poll_event(wackos_frame_t *out_event, uint32_t timeout_ms)
 {
     if (s_has_pending_event) {
@@ -248,8 +315,16 @@ bool wackos_proto_poll_event(wackos_frame_t *out_event, uint32_t timeout_ms)
     return false;
 }
 
-/* ---------------------------------------------------------------- */
+/* ============================================================================
+ *  Public API — сторона slave: приём запроса, отправка ответа/события
+ * ============================================================================ */
 
+/**
+ * @brief   Дождаться следующего REQ, адресованного нам (блокирующе, с тайм-аутом).
+ * @param   out_request  Куда записать разобранный запрос.
+ * @param   timeout_ms   Тайм-аут ожидания, мс.
+ * @return  true, если запрос получен и заполнен в out_request.
+ */
 bool wackos_proto_receive_request(wackos_frame_t *out_request, uint32_t timeout_ms)
 {
     uint32_t deadline = now_ms() + timeout_ms;
@@ -290,6 +365,7 @@ bool wackos_proto_receive_request(wackos_frame_t *out_request, uint32_t timeout_
     return false;
 }
 
+/** @brief  Отправить RES OK с тем же addr/seq, что был в request. */
 void wackos_proto_send_ok(const wackos_frame_t *request, const char *payload)
 {
     wackos_frame_t res = {
@@ -303,6 +379,7 @@ void wackos_proto_send_ok(const wackos_frame_t *request, const char *payload)
     send_frame(&res);
 }
 
+/** @brief  Отправить RES ERR с тем же addr/seq, что был в request (error_code — один из WACKOS_ERR_*). */
 void wackos_proto_send_err(const wackos_frame_t *request, const char *error_code)
 {
     wackos_frame_t res = {
@@ -316,6 +393,7 @@ void wackos_proto_send_err(const wackos_frame_t *request, const char *error_code
     send_frame(&res);
 }
 
+/** @brief  Отправить асинхронное событие EVT (не привязано к конкретному REQ). */
 void wackos_proto_send_event(uint8_t addr, const char *event_name, const char *payload)
 {
     wackos_frame_t evt = {
