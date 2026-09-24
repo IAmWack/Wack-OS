@@ -1,3 +1,13 @@
+/**
+ * @file    dispatcher.c
+ * @author  IAmWack
+ * @brief   Диспетчер команд slave: разбор REQ по имени и вызов обработчика.
+ *
+ * Единственное место, которое знает имена команд протокола и умеет на
+ * них отвечать (см. docs/PROTOCOL.md). Неизвестные команды из
+ * namespace модулей (ENC_/RADIO_/HID_/SENSOR_) отдаются на откуп
+ * соответствующему module_*_handle().
+ */
 #include "dispatcher.h"
 #include "modules/module_radio.h"
 #include "modules/module_hid.h"
@@ -12,7 +22,15 @@
 #include "esp_system.h"
 #include "driver/gpio.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 #define FW_VERSION "0.1.0-skeleton"
+
+/* ============================================================================
+ *  Types
+ * ============================================================================ */
 
 /*
  * Пункты меню, которые slave отдаёт master через UI_MENU_GET. Это
@@ -25,17 +43,33 @@ typedef struct {
     const char *title;
 } menu_entry_t;
 
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
+
 static const menu_entry_t MENU[] = {
     { "hello", "Say hello" },
     { "about", "About slave" },
 };
 #define MENU_COUNT (sizeof(MENU) / sizeof(MENU[0]))
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/**
+ * @brief   Обработчик SYS_PING — отвечает "PONG".
+ * @param   req  Входящий запрос SYS_PING.
+ */
 static void handle_sys_ping(const wackos_frame_t *req)
 {
     wackos_proto_send_ok(req, "PONG");
 }
 
+/**
+ * @brief   Обработчик SYS_VERSION — версия протокола и прошивки.
+ * @param   req  Входящий запрос SYS_VERSION.
+ */
 static void handle_sys_version(const wackos_frame_t *req)
 {
     char payload[WACKOS_PAYLOAD_MAX];
@@ -43,12 +77,20 @@ static void handle_sys_version(const wackos_frame_t *req)
     wackos_proto_send_ok(req, payload);
 }
 
+/**
+ * @brief   Обработчик SYS_CAPS — список поддерживаемых команд.
+ * @param   req  Входящий запрос SYS_CAPS.
+ */
 static void handle_sys_caps(const wackos_frame_t *req)
 {
     wackos_proto_send_ok(req,
         "SYS_PING;SYS_VERSION;SYS_CAPS;SYS_RESET;UI_MENU_GET;UI_MENU_SELECT;ENC_GET");
 }
 
+/**
+ * @brief   Обработчик SYS_RESET — подтверждает и перезагружает плату.
+ * @param   req  Входящий запрос SYS_RESET.
+ */
 static void handle_sys_reset(const wackos_frame_t *req)
 {
     wackos_proto_send_ok(req, "-");
@@ -56,11 +98,13 @@ static void handle_sys_reset(const wackos_frame_t *req)
     esp_restart();
 }
 
-/*
- * SYS_LED <COLOR>,<STATE> — временная тестовая команда, не часть
- * протокола v1 (docs/PROTOCOL.md её не описывает). Нужна только чтобы
- * руками проверять формат кадров на реальном железе (два светодиода
- * на макетке) до появления master и настоящих модулей.
+/**
+ * @brief   Обработчик SYS_LED <COLOR>,<STATE> — временная тестовая команда.
+ * @param   req  Входящий запрос SYS_LED.
+ *
+ * Не часть протокола v1 (docs/PROTOCOL.md её не описывает). Нужна
+ * только чтобы руками проверять формат кадров на реальном железе (два
+ * светодиода на макетке) до появления master и настоящих модулей.
  */
 static void handle_sys_led(const wackos_frame_t *req)
 {
@@ -103,6 +147,10 @@ static void handle_sys_led(const wackos_frame_t *req)
     wackos_proto_send_ok(req, "-");
 }
 
+/**
+ * @brief   Обработчик UI_MENU_GET — отдаёт список пунктов меню MENU.
+ * @param   req  Входящий запрос UI_MENU_GET.
+ */
 static void handle_ui_menu_get(const wackos_frame_t *req)
 {
     char payload[WACKOS_PAYLOAD_MAX] = "";
@@ -115,6 +163,10 @@ static void handle_ui_menu_get(const wackos_frame_t *req)
     wackos_proto_send_ok(req, payload);
 }
 
+/**
+ * @brief   Обработчик UI_MENU_SELECT — выполняет выбранный пункт меню.
+ * @param   req  Входящий запрос UI_MENU_SELECT (payload — id пункта).
+ */
 static void handle_ui_menu_select(const wackos_frame_t *req)
 {
     for (size_t i = 0; i < MENU_COUNT; i++) {
@@ -131,6 +183,14 @@ static void handle_ui_menu_select(const wackos_frame_t *req)
     wackos_proto_send_err(req, WACKOS_ERR_BAD_ARGS);
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Обработать один разобранный REQ и отправить соответствующий RES.
+ * @param   request  Разобранный входящий кадр-запрос.
+ */
 void dispatcher_handle(const wackos_frame_t *request)
 {
     const char *cmd = request->field;

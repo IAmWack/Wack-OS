@@ -1,8 +1,11 @@
-/*
- * Заглушка driver/uart.h — нужна только потому, что board_pins.h
- * (и master, и slave) подтягивает номера портов UART_NUM_*.
- * Настоящего UART в симуляторе нет: master и slave разговаривают
- * через петлю в памяти (sim_transport.c).
+/**
+ * @file    driver/uart.h
+ * @author  IAmWack
+ * @brief   Заглушка driver/uart.h — только номера портов UART_NUM_*.
+ *
+ * Нужна только потому, что board_pins.h (и master, и slave) подтягивает
+ * номера портов UART_NUM_*. Настоящего UART в симуляторе нет: master и
+ * slave разговаривают через петлю в памяти (sim_transport.c).
  */
 #pragma once
 

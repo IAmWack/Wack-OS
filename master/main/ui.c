@@ -1,3 +1,13 @@
+/**
+ * @file    ui.c
+ * @author  IAmWack
+ * @brief   Слой интерфейса master: роутер экранов, навигация, "хром" кадра.
+ *
+ * Знает про меню и рисование, но ничего не знает про UART, протокол и
+ * то, что физически умеет slave. С логикой общается только через
+ * app_logic.h (спросить данные, выполнить действие). Сами экраны живут
+ * в master/main/screens/, каждый реализует ui_screen_t (ui_screen.h).
+ */
 #include "ui.h"
 #include "ui_screen.h"
 #include "theme.h"
@@ -16,12 +26,20 @@
 
 static const char *TAG = "ui";
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 /* Кадр перерисовывается не чаще этого — иначе SPI к ST7789 будет занят
  * только отрисовкой (полный кадр 172x320x16 бит на 40 МГц ≈ 22 мс). */
 #define FRAME_INTERVAL_MS 50
 
 /* Глубина стека экранов: меню -> модули -> модуль — больше и не нужно. */
 #define NAV_DEPTH 6
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static const ui_screen_t *const SCREENS[SCREEN_COUNT] = {
     [SCREEN_BOOT]     = &screen_boot,
@@ -42,11 +60,17 @@ static bool s_busy = false;
 
 static uint32_t s_last_turn_ms = 0;
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/** @brief  Текущее время в миллисекундах (монотонное). */
 static inline uint32_t now_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+/** @brief  Указатель на текущий экран (вершина стека навигации). */
 static const ui_screen_t *current(void)
 {
     return SCREENS[s_stack[s_depth]];
@@ -78,11 +102,13 @@ static const struct { int16_t x, y; uint8_t r; uint16_t period; } DECO_SPARKS[] 
 };
 #define DECO_SPARK_COUNT (sizeof(DECO_SPARKS) / sizeof(DECO_SPARKS[0]))
 
+/** @brief  Плавная пульсация [0..1] с заданным периодом и фазой (синус). */
 static float pulse(uint32_t t_ms, float period_ms, float phase)
 {
     return 0.5f + 0.5f * sinf((float)t_ms / period_ms * 6.2831853f + phase);
 }
 
+/** @brief  Нарисовать фон: градиент, ткань, декоративные сердечки и искорки. */
 static void draw_wallpaper(uint32_t t)
 {
     gfx_gradient_v(0, GFX_H / 2, TH->bg_top, TH->bg_mid);
@@ -117,6 +143,9 @@ static void draw_wallpaper(uint32_t t)
     }
 }
 
+/**
+ * @brief   Нарисовать шапку: карточка, заголовок/логотип, индикатор связи.
+ */
 static void draw_header(uint32_t t)
 {
     const int card_x = 6, card_y = HEADER_Y, card_w = GFX_W - 12, card_h = HEADER_H;
@@ -164,6 +193,8 @@ static void draw_header(uint32_t t)
  * Строка подсказок. В hint можно поставить '|': тогда левая часть
  * прижимается влево, правая вправо — так две подсказки помещаются в
  * 172 пикселя, а по центру они не влезали и обрезались.
+ *
+ * @brief   Нарисовать строку подсказок внизу экрана.
  */
 static void draw_hintbar(uint32_t t)
 {
@@ -212,6 +243,9 @@ static void draw_hintbar(uint32_t t)
     gfx_text_ellipsis(f, 12, y, left, GFX_W - 32 - right_w, TH->text, 230);
 }
 
+/**
+ * @brief   Отрисовать один кадр целиком (обои, шапка, экран, подсказки) и вывести его.
+ */
 static void render(void)
 {
     /*
@@ -244,6 +278,14 @@ static void render(void)
 /* Навигация                                                           */
 /* ------------------------------------------------------------------ */
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Перейти на экран, нарастив стек навигации.
+ * @param   id  Идентификатор экрана.
+ */
 void ui_goto(screen_id_t id)
 {
     if (id >= SCREEN_COUNT) {
@@ -258,6 +300,10 @@ void ui_goto(screen_id_t id)
     }
 }
 
+/**
+ * @brief   Заменить текущий экран, не наращивая стек (нужно загрузке).
+ * @param   id  Идентификатор экрана.
+ */
 void ui_replace(screen_id_t id)
 {
     if (id >= SCREEN_COUNT) {
@@ -269,6 +315,7 @@ void ui_replace(screen_id_t id)
     }
 }
 
+/** @brief  Вернуться на предыдущий экран (длинное нажатие). */
 void ui_back(void)
 {
     if (s_depth == 0) {
@@ -281,6 +328,7 @@ void ui_back(void)
     }
 }
 
+/** @brief  Идентификатор текущего экрана. */
 screen_id_t ui_current(void)
 {
     return s_stack[s_depth];
@@ -288,6 +336,7 @@ screen_id_t ui_current(void)
 
 /* ------------------------------------------------------------------ */
 
+/** @brief  Инициализировать дисплей, энкодер, звук, настройки и показать boot. */
 void ui_init(void)
 {
     display_init();
@@ -303,6 +352,7 @@ void ui_init(void)
     astolfo_note_activity();
 }
 
+/** @brief  Короткое сообщение пользователю (реплика в облачке у Астольфо). */
 void ui_toast(const char *text)
 {
     strncpy(s_toast, text, sizeof(s_toast) - 1);
@@ -310,21 +360,28 @@ void ui_toast(const char *text)
     ESP_LOGI(TAG, "%s", s_toast);
 }
 
+/** @brief  Текст последнего тоста. */
 const char *ui_toast_text(void)
 {
     return s_toast;
 }
 
+/** @brief  Установить состояние связи со slave — индикатор в шапке. */
 void ui_set_link_online(bool online)
 {
     s_link_online = online;
 }
 
+/** @brief  Текущее состояние связи со slave. */
 bool ui_link_online(void)
 {
     return s_link_online;
 }
 
+/**
+ * @brief   Отметить, идёт ли сейчас блокирующий запрос к slave.
+ * @param   busy  true — сразу рисует кадр, чтобы "думаю" было видно.
+ */
 void ui_set_busy(bool busy)
 {
     s_busy = busy;
@@ -334,6 +391,9 @@ void ui_set_busy(bool busy)
     }
 }
 
+/**
+ * @brief   Один шаг интерфейса: кадр плюс разбор события энкодера.
+ */
 void ui_tick(void)
 {
     render();

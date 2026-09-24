@@ -1,9 +1,11 @@
-/*
- * Настоящий UART вместо петли в памяти: тот же wackos_transport_t, но
- * за ним USB-переходник и живая плата slave.
+/**
+ * @file    sim_serial.c
+ * @author  IAmWack
+ * @brief   Настоящий UART вместо петли в памяти — sim_transport.c для живой платы.
  *
- * Ради этого всё и разделено на слои — UI, логика и протокол не
- * замечают подмены, меняется только то, куда уходят байты. Запуск:
+ * Тот же wackos_transport_t, но за ним USB-переходник и живая плата
+ * slave. Ради этого всё и разделено на слои — UI, логика и протокол
+ * не замечают подмены, меняется только то, куда уходят байты. Запуск:
  *
  *     ./wackos-sim -p /dev/ttyUSB0
  */
@@ -21,7 +23,15 @@
 
 #include "wackos_protocol.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 #define ACC_MAX (WACKOS_LINE_MAX * 2)
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static int s_fd = -1;
 static char s_port[64] = "";
@@ -30,16 +40,32 @@ static char s_port[64] = "";
 static char s_acc[ACC_MAX];
 static size_t s_acc_len = 0;
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/** @brief true — симулятор говорит с живой платой, а не с фальшивым slave. @return Открыт ли serial-порт. */
 bool sim_serial_active(void)
 {
     return s_fd >= 0;
 }
 
+/** @brief Путь открытого порта. @return Строка порта либо пустая строка, если он не открыт. */
 const char *sim_serial_port(void)
 {
     return s_port;
 }
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/**
+ * @brief   Записать байты в serial-порт (реализация wackos_transport_t::write).
+ * @param   data  Буфер для отправки.
+ * @param   len   Длина буфера.
+ * @return  Число отправленных байт, либо -1, если порт не открыт.
+ */
 static int serial_write(const uint8_t *data, size_t len)
 {
     if (s_fd < 0) {
@@ -63,7 +89,12 @@ static int serial_write(const uint8_t *data, size_t len)
     return (int)sent;
 }
 
-/* Отдать из накопителя первую целую строку, если она там есть. */
+/**
+ * @brief   Отдать из накопителя первую целую строку, если она там есть.
+ * @param   buf      Куда скопировать строку.
+ * @param   max_len  Размер buf.
+ * @return  Длина скопированного (0, если целой строки ещё нет).
+ */
 static int take_line(uint8_t *buf, size_t max_len)
 {
     char *nl = memchr(s_acc, '\n', s_acc_len);
@@ -84,7 +115,7 @@ static int take_line(uint8_t *buf, size_t max_len)
     return (int)copy;
 }
 
-/* Забрать из порта всё, что уже пришло, не блокируясь. */
+/** @brief Забрать из порта всё, что уже пришло, не блокируясь. */
 static void drain_fd(void)
 {
     for (;;) {
@@ -105,6 +136,13 @@ static void drain_fd(void)
     }
 }
 
+/**
+ * @brief   Прочитать одну строку из serial-порта (реализация wackos_transport_t::read_line).
+ * @param   buf         Куда скопировать строку.
+ * @param   max_len     Размер buf.
+ * @param   timeout_ms  Максимальное время ожидания.
+ * @return  Длина строки, 0 по тайм-ауту, -1, если порт не открыт.
+ */
 static int serial_read_line(uint8_t *buf, size_t max_len, uint32_t timeout_ms)
 {
     if (s_fd < 0) {
@@ -155,6 +193,16 @@ static const wackos_transport_t s_transport = {
     .read_line = serial_read_line,
 };
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Открыть serial-порт и настроить его под протокол Wack-OS.
+ * @param   port  Путь устройства (например /dev/ttyUSB0).
+ * @param   baud  Скорость порта.
+ * @return  Транспорт для wackos_proto_init(), либо NULL при ошибке.
+ */
 const wackos_transport_t *sim_serial_open(const char *port, int baud)
 {
     s_fd = open(port, O_RDWR | O_NOCTTY | O_NONBLOCK);
@@ -227,6 +275,7 @@ const wackos_transport_t *sim_serial_open(const char *port, int baud)
     return &s_transport;
 }
 
+/** @brief Закрыть открытый ранее serial-порт. */
 void sim_serial_close(void)
 {
     if (s_fd >= 0) {

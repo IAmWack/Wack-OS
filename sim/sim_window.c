@@ -1,10 +1,13 @@
-/*
- * Окно симулятора на голом Xlib — специально без SDL и прочих
- * зависимостей, чтобы "сделал make и запустил", без установки пакетов.
+/**
+ * @file    sim_window.c
+ * @author  IAmWack
+ * @brief   Окно симулятора на голом Xlib — заменяет ST7789 X11-окном с "корпусом".
  *
- * Рисует корпус устройства: экран 172x320 (кадр из wackos_gfx,
- * увеличенный в scale раз, без сглаживания — чтобы пиксели были ровно
- * те же, что уедут на ST7789), ручку энкодера и подсказку по клавишам.
+ * Специально без SDL и прочих зависимостей, чтобы "сделал make и
+ * запустил", без установки пакетов. Рисует корпус устройства: экран
+ * 172x320 (кадр из wackos_gfx, увеличенный в scale раз, без
+ * сглаживания — чтобы пиксели были ровно те же, что уедут на ST7789),
+ * ручку энкодера и подсказку по клавишам.
  */
 #include "sim.h"
 
@@ -21,9 +24,17 @@
 #include "wackos_gfx.h"
 #include "ui.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 #define PAD_X       22
 #define PAD_TOP     22
 #define PANEL_H     104
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static Display *s_dpy = NULL;
 static Window   s_win = 0;
@@ -41,8 +52,11 @@ static float s_knob_target = 0.0f;  /* куда она едет */
 static uint32_t s_press_at = 0;     /* когда нажали кнопку — для подсветки */
 static int s_shot_counter = 0;
 
-/* ---- вспомогательное рисование прямо в окно (32bpp) ---- */
+/* ============================================================================
+ *  Static helpers — вспомогательное рисование прямо в окно (32bpp)
+ * ============================================================================ */
 
+/** @brief Записать один пиксель окна (с отсечением по границам). @param x Координата X. @param y Координата Y. @param rgb Цвет 0xRRGGBB. */
 static inline void put(int x, int y, uint32_t rgb)
 {
     if (x < 0 || y < 0 || x >= s_win_w || y >= s_win_h) {
@@ -51,6 +65,7 @@ static inline void put(int x, int y, uint32_t rgb)
     s_pixels[y * s_win_w + x] = rgb;
 }
 
+/** @brief Перевести цвет RGB565 (кадровый буфер wackos_gfx) в RGB888 (окно X11). @param c Цвет RGB565. @return Цвет 0xRRGGBB. */
 static uint32_t rgb565_to_888(uint16_t c)
 {
     uint32_t r = (c >> 11) & 0x1F;
@@ -62,6 +77,7 @@ static uint32_t rgb565_to_888(uint16_t c)
     return (r << 16) | (g << 8) | b;
 }
 
+/** @brief Закрасить круг сплошным цветом. @param cx Центр X. @param cy Центр Y. @param r Радиус. @param rgb Цвет. */
 static void fill_circle(int cx, int cy, int r, uint32_t rgb)
 {
     for (int y = cy - r; y <= cy + r; y++) {
@@ -74,6 +90,7 @@ static void fill_circle(int cx, int cy, int r, uint32_t rgb)
     }
 }
 
+/** @brief Нарисовать фон-"корпус" устройства (градиент + рамка вокруг экрана). */
 static void draw_body(void)
 {
     /* Корпус: мягкий розово-сиреневый градиент. */
@@ -103,6 +120,7 @@ static void draw_body(void)
     }
 }
 
+/** @brief Нарисовать ручку энкодера (положение угла + подсветка при нажатии). */
 static void draw_knob(void)
 {
     int cx = s_win_w - PAD_X - 34;
@@ -124,7 +142,7 @@ static void draw_knob(void)
     fill_circle(cx, cy, 4, 0xE84A98);
 }
 
-/* Индикатор состояния провода: зелёный/красный кружок у левого края панели. */
+/** @brief Индикатор состояния провода: зелёный/красный/жёлтый кружок у левого края панели. */
 static void draw_link_led(void)
 {
     int cx = PAD_X + 14;
@@ -141,6 +159,7 @@ static void draw_link_led(void)
     fill_circle(cx, cy, 5, c);
 }
 
+/** @brief Нарисовать две строки подсказки: состояние связи и управление клавиатурой/мышью. */
 static void draw_hints(void)
 {
     char line1[128];
@@ -165,8 +184,15 @@ static void draw_hints(void)
     XDrawString(s_dpy, s_win, s_gc, PAD_X, base_y + 26, line2, (int)strlen(line2));
 }
 
-/* ---- публичное ---- */
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
 
+/**
+ * @brief   Открыть X11-окно симулятора.
+ * @param   scale  Масштаб пикселя (0 — подобрать под высоту экрана, 1..4).
+ * @return  false при ошибке (нет X-дисплея или не создалось изображение).
+ */
 bool sim_window_open(int scale)
 {
     s_dpy = XOpenDisplay(NULL);
@@ -221,6 +247,7 @@ bool sim_window_open(int scale)
     return true;
 }
 
+/** @brief Закрыть окно и освободить ресурсы X11. */
 void sim_window_close(void)
 {
     if (!s_dpy) {
@@ -236,21 +263,25 @@ void sim_window_close(void)
     s_alive = false;
 }
 
+/** @brief Открыто ли сейчас окно. @return true, пока окно живо. */
 bool sim_window_alive(void)
 {
     return s_alive;
 }
 
+/** @brief Повернуть нарисованную ручку энкодера (анимация доезжает плавно). @param dir +1/-1 — направление щелчка. */
 void sim_window_note_turn(int dir)
 {
     s_knob_target += dir * 0.52f; /* примерно щелчок KY-040 */
 }
 
+/** @brief Отметить момент нажатия кнопки энкодера (для подсветки в draw_knob()). */
 void sim_window_note_press(void)
 {
     s_press_at = sim_now_ms();
 }
 
+/** @brief Показать кадр (172x320 RGB565) с "корпусом" вокруг него. @param fb Кадровый буфер wackos_gfx. */
 void sim_window_present(const uint16_t *fb)
 {
     if (!s_alive) {
@@ -286,6 +317,7 @@ void sim_window_present(const uint16_t *fb)
     XFlush(s_dpy);
 }
 
+/** @brief Сохранить текущий кадр в PPM рядом с бинарником (клавиша S). @param fb Кадровый буфер wackos_gfx. */
 void sim_window_screenshot(const uint16_t *fb)
 {
     char name[64];
@@ -304,6 +336,11 @@ void sim_window_screenshot(const uint16_t *fb)
     printf("[sim] снимок экрана: %s\n", name);
 }
 
+/* ============================================================================
+ *  Static helpers — обработка событий
+ * ============================================================================ */
+
+/** @brief Обработать одно нажатие клавиши (стрелки/Enter/Backspace/O/L/S/Q). @param key Код клавиши X11. */
 static void handle_key(KeySym key)
 {
     switch (key) {
@@ -369,6 +406,15 @@ static void handle_key(KeySym key)
     }
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Обработать события окна (клавиатура/мышь/закрытие) не дольше timeout_ms.
+ * @param   timeout_ms  Верхняя граница ожидания.
+ * @return  false — окно закрыли.
+ */
 bool sim_window_pump(uint32_t timeout_ms)
 {
     if (!s_alive) {

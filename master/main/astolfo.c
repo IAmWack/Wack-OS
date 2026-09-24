@@ -1,8 +1,22 @@
+/**
+ * @file    astolfo.c
+ * @author  IAmWack
+ * @brief   Отрисовка и состояние персонажа-маскота Астольфо.
+ *
+ * Астольфо — не картинка, а состояние системы: настроение переключает
+ * app_logic.c по событиям протокола (ответил slave -> happy, молчит ->
+ * sad, идёт запрос -> thinking), простой уводит в sleep. Рисуется
+ * целиком примитивами components/wackos_gfx, без единого PNG/ассета.
+ */
 #include "astolfo.h"
 #include "theme.h"
 #include "wackos_gfx.h"
 
 #include <math.h>
+
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
 
 /*
  * Цвета персонажа намеренно не зависят от темы интерфейса: тема — это
@@ -34,22 +48,36 @@
 /* Через сколько простоя Астольфо засыпает. */
 #define SLEEP_AFTER_MS 60000
 
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
+
 static astolfo_mood_t s_mood = ASTOLFO_IDLE;
 static uint32_t s_mood_at = 0;
 static uint32_t s_activity_at = 0;
 static uint32_t s_now = 0;
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Установить текущее настроение персонажа.
+ * @param   mood  Новое настроение.
+ */
 void astolfo_set_mood(astolfo_mood_t mood)
 {
     s_mood = mood;
     s_mood_at = s_now;
 }
 
+/** @brief  Текущее настроение персонажа. */
 astolfo_mood_t astolfo_mood(void)
 {
     return s_mood;
 }
 
+/** @brief  Отметить активность пользователя — сбросить таймер засыпания. */
 void astolfo_note_activity(void)
 {
     s_activity_at = s_now;
@@ -58,6 +86,13 @@ void astolfo_note_activity(void)
     }
 }
 
+/**
+ * @brief   Раз в кадр: обновить настроение по прошедшему времени.
+ * @param   now_ms  Текущее время в миллисекундах (монотонное).
+ *
+ * Возвращает happy/sad в idle через пару секунд и уводит в sleep после
+ * долгого простоя.
+ */
 void astolfo_tick(uint32_t now_ms)
 {
     s_now = now_ms;
@@ -74,6 +109,7 @@ void astolfo_tick(uint32_t now_ms)
     }
 }
 
+/** @brief  Реплика персонажа под текущее настроение — для облачка в меню. */
 const char *astolfo_line(void)
 {
     switch (s_mood) {
@@ -89,6 +125,11 @@ const char *astolfo_line(void)
 /* Рисование                                                           */
 /* ------------------------------------------------------------------ */
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/** @brief  Плавная пульсация [0..1] с заданным периодом и фазой (синус). */
 static float pulse(uint32_t t, float period_ms, float phase)
 {
     return 0.5f + 0.5f * sinf((float)t / period_ms * 6.2831853f + phase);
@@ -100,6 +141,12 @@ static bool is_blinking(uint32_t t)
     return (t % 3600) < 110;
 }
 
+/**
+ * @brief   Нарисовать открытый глаз с бликом и верхним веком/ресницами.
+ * @param   cx, cy       Центр глаза.
+ * @param   ex, ey       Полуоси глаза (радиусы).
+ * @param   look_x, look_y  Смещение зрачка — направление взгляда.
+ */
 static void draw_eye_open(int cx, int cy, int ex, int ey, int look_x, int look_y)
 {
     gfx_ellipse(cx, cy, ex, ey, EYE_WHITE, 255);
@@ -118,7 +165,13 @@ static void draw_eye_open(int cx, int cy, int ex, int ey, int look_x, int look_y
              LASH, 235);
 }
 
-/* Закрытый глаз дугой: up = true -> "^" (радость), false -> "∪" (сон/моргание). */
+/**
+ * @brief   Нарисовать закрытый глаз дугой.
+ * @param   cx, cy  Центр глаза.
+ * @param   ex      Радиус дуги.
+ * @param   t       Толщина линии.
+ * @param   up      true -> "^" (радость), false -> "∪" (сон/моргание).
+ */
 static void draw_eye_closed(int cx, int cy, int ex, int t, bool up)
 {
     if (up) {
@@ -133,6 +186,10 @@ static void draw_eye_closed(int cx, int cy, int ex, int t, bool up)
  * пояса), перекинута вперёд через плечо, с ЧЁРНОЙ лентой у основания.
  * Рисуется цепочкой "перехлёстов" со смещением влево-вправо и сужением
  * к кончику — так она читается плетением, а не шариками.
+ *
+ * @param   x, y   Точка крепления косы (у плеча).
+ * @param   h      Высота головы (масштаб всей фигуры).
+ * @param   swing  Текущее качание (см. sway_f в astolfo_draw()).
  */
 static void draw_braid(int x, int y, int h, float swing)
 {
@@ -165,6 +222,20 @@ static void draw_braid(int x, int y, int h, float swing)
     gfx_bow(tip_x, tip_y + (int)(r0 * 0.6f), (int)(h * 0.16f), RIBBON, 255);
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Нарисовать бюст Астольфо (голова, волосы, коса, плечи, плащ).
+ * @param   cx  Центр по X.
+ * @param   y   Верх фигуры по Y.
+ * @param   h   Высота головы — масштаб всей фигуры (см. ASTOLFO_BUST_H).
+ * @param   t   Время в миллисекундах, для анимации (дыхание, моргание...).
+ *
+ * Один и тот же код рисует и маленького Астольфо в углу меню, и
+ * большого на экране загрузки — разницу делает только h.
+ */
 void astolfo_draw(int cx, int y, int h, uint32_t t)
 {
     if (h < 16) {

@@ -1,11 +1,19 @@
-#include "theme.h"
-
-/*
+/**
+ * @file    theme.c
+ * @author  IAmWack
+ * @brief   Палитры интерфейса master (розовая, лаванда, мята).
+ *
  * Три палитры. Розовая — основная (ради неё всё и затевалось),
  * остальные две — тот же силуэт интерфейса в другом настроении.
  * Добавить четвёртую = дописать строку в этот массив, больше нигде
  * ничего менять не нужно.
  */
+#include "theme.h"
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
+
 static const wackos_theme_t THEMES[] = {
     {
         .name = "розовая",
@@ -50,22 +58,37 @@ static const wackos_theme_t THEMES[] = {
 static size_t s_index = 0;
 const wackos_theme_t *TH = &THEMES[0];
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/** @brief  Количество доступных тем. */
 size_t theme_count(void)
 {
     return THEME_COUNT;
 }
 
+/** @brief  Индекс текущей темы. */
 size_t theme_index(void)
 {
     return s_index;
 }
 
+/**
+ * @brief   Переключить текущую тему.
+ * @param   index  Индекс темы (за пределами — берётся по модулю THEME_COUNT).
+ */
 void theme_set(size_t index)
 {
     s_index = index % THEME_COUNT;
     TH = &THEMES[s_index];
 }
 
+/**
+ * @brief   Название темы по индексу (для экрана настроек).
+ * @param   index  Индекс темы (за пределами — берётся по модулю THEME_COUNT).
+ * @return  Человекочитаемое имя темы.
+ */
 const char *theme_name(size_t index)
 {
     return THEMES[index % THEME_COUNT].name;

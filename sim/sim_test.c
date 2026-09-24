@@ -1,5 +1,7 @@
-/*
- * Прогон по живой плате slave.
+/**
+ * @file    sim_test.c
+ * @author  IAmWack
+ * @brief   Точка входа тестового прогона по живой плате slave (./wackos-test).
  *
  * Гоняет НАСТОЯЩИЙ код master (слой протокола + логика + экраны) против
  * настоящей платы по USB и проверяет, что каждый ответ такой, как
@@ -23,13 +25,32 @@
 #include "ui.h"
 #include "app_logic.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 #define REQ_TIMEOUT_MS 150
 #define REQ_RETRIES    2
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static int s_pass = 0;
 static int s_fail = 0;
 static const wackos_transport_t *s_transport = NULL;
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/**
+ * @brief   Напечатать результат одной проверки и обновить счётчики pass/fail.
+ * @param   ok          Прошла ли проверка.
+ * @param   name        Название проверки.
+ * @param   detail_fmt  printf-формат подробности (может быть NULL).
+ * @param   ...         Аргументы формата.
+ */
 static void check(bool ok, const char *name, const char *detail_fmt, ...)
 {
     char detail[192] = "";
@@ -49,13 +70,26 @@ static void check(bool ok, const char *name, const char *detail_fmt, ...)
     }
 }
 
-/* Обёртка запроса: возвращает статус и заполняет resp. */
+/**
+ * @brief   Обёртка запроса: возвращает статус и заполняет resp.
+ * @param   cmd   Команда протокола.
+ * @param   args  Аргументы команды (может быть NULL).
+ * @param   resp  Куда положить ответ.
+ * @return  Статус запроса (см. wackos_status_t).
+ */
 static wackos_status_t req(const char *cmd, const char *args, wackos_frame_t *resp)
 {
     return wackos_proto_request(WACKOS_ADDR_SLAVE1, cmd, args, resp,
                                 REQ_TIMEOUT_MS, REQ_RETRIES);
 }
 
+/**
+ * @brief   Проверить, что запрос отвечает OK с ожидаемым payload.
+ * @param   cmd     Команда протокола.
+ * @param   args    Аргументы команды.
+ * @param   expect  Ожидаемый payload (NULL — не проверять содержимое).
+ * @param   name    Название проверки для отчёта.
+ */
 static void expect_ok(const char *cmd, const char *args, const char *expect,
                       const char *name)
 {
@@ -72,6 +106,13 @@ static void expect_ok(const char *cmd, const char *args, const char *expect,
     check(true, name, "«%s»", resp.payload);
 }
 
+/**
+ * @brief   Проверить, что запрос отвечает ERR с ожидаемым кодом ошибки.
+ * @param   cmd   Команда протокола.
+ * @param   args  Аргументы команды.
+ * @param   code  Ожидаемый код ошибки (см. docs/PROTOCOL.md).
+ * @param   name  Название проверки для отчёта.
+ */
 static void expect_err(const char *cmd, const char *args, const char *code,
                        const char *name)
 {
@@ -84,10 +125,11 @@ static void expect_err(const char *cmd, const char *args, const char *code,
     check(strcmp(resp.payload, code) == 0, name, "«%s», ждали «%s»", resp.payload, code);
 }
 
-/* ------------------------------------------------------------------ */
-/* Проверки протокола                                                  */
-/* ------------------------------------------------------------------ */
+/* ============================================================================
+ *  Static helpers — проверки протокола
+ * ============================================================================ */
 
+/** @brief Проверки команд SYS_* (PING/VERSION/CAPS). */
 static void test_sys(void)
 {
     printf("\nSYS_*\n");
@@ -113,6 +155,7 @@ static void test_sys(void)
     }
 }
 
+/** @brief Проверки команд UI_* (получение и выбор пунктов меню slave). */
 static void test_ui_commands(void)
 {
     printf("\nUI_*\n");
@@ -136,6 +179,7 @@ static void test_ui_commands(void)
                "неизвестный id -> E_BAD_ARGS");
 }
 
+/** @brief Проверки кодов ошибок: неизвестная команда и заглушки RADIO/HID/SENSOR. */
 static void test_errors(void)
 {
     printf("\nОшибки и заглушки\n");
@@ -149,8 +193,12 @@ static void test_errors(void)
                "SENSOR_* -> E_NOT_SUPPORTED");
 }
 
-/* Кадр с намеренно испорченной контрольной суммой — собираем руками,
- * потому что слой протокола правильный кадр испортить не даст. */
+/**
+ * @brief   Проверка реакции на кадр с намеренно испорченной контрольной суммой.
+ *
+ * Кадр собираем руками, потому что слой протокола правильный кадр
+ * испортить не даст.
+ */
 static void test_bad_csum(void)
 {
     printf("\nБитый кадр\n");
@@ -179,8 +227,12 @@ static void test_bad_csum(void)
           resp.field, resp.payload, resp.seq);
 }
 
-/* Адресация: запрос на чужой адрес не наш, отвечать на него slave 01
- * не должен (docs/PROTOCOL.md: адрес — часть контракта). */
+/**
+ * @brief   Проверка адресации: запрос на чужой адрес не наш.
+ *
+ * Отвечать на него slave 01 не должен (docs/PROTOCOL.md: адрес —
+ * часть контракта).
+ */
 static void test_addressing(void)
 {
     printf("\nАдресация\n");
@@ -192,6 +244,7 @@ static void test_addressing(void)
                                    : "ответил: addr %02u «%s»", resp.addr, resp.payload);
 }
 
+/** @brief Проверка времени ответа: 20 пингов подряд, среднее в пределах тайм-аута. */
 static void test_rtt(void)
 {
     printf("\nВремя ответа\n");
@@ -227,9 +280,10 @@ static void test_rtt(void)
     }
 }
 
-/*
- * Перезагрузка — последней: плата на ~0.6 с выпадает из эфира.
+/**
+ * @brief   Проверка перезагрузки и восстановления связи (вызывать последней).
  *
+ * Перезагрузка — последней: плата на ~0.6 с выпадает из эфира.
  * Проверяем не «master увидел обрыв», а ровно то, что обещает
  * docs/PROTOCOL.md: одиночная попытка в это время отваливается по
  * тайм-ауту, но три попытки за 450 мс перекрывают ребут, и для
@@ -278,10 +332,11 @@ static void test_reset_recovery(void)
     expect_ok("SYS_VERSION", NULL, NULL, "после ребута версия читается");
 }
 
-/* ------------------------------------------------------------------ */
-/* Проверки интерфейса поверх живой платы                              */
-/* ------------------------------------------------------------------ */
+/* ============================================================================
+ *  Static helpers — проверки интерфейса поверх живой платы
+ * ============================================================================ */
 
+/** @brief Проверка полного сценария UI (загрузка -> меню -> модуль -> назад -> slave) на живых данных. */
 static void test_ui_flow(void)
 {
     printf("\nИнтерфейс на живых данных\n");
@@ -330,8 +385,16 @@ static void test_ui_flow(void)
     headless_shoot("live-04-slave");
 }
 
-/* ------------------------------------------------------------------ */
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
 
+/**
+ * @brief   Разбор аргументов, подключение и прогон всех проверок по порядку.
+ * @param   argc  Число аргументов.
+ * @param   argv  Аргументы: -p порт, -b скорость, -v verbose (см. headless_connect()).
+ * @return  0, если все проверки прошли, иначе 1.
+ */
 int main(int argc, char **argv)
 {
     const char *port = NULL;

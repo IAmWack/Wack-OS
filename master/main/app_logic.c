@@ -1,3 +1,13 @@
+/**
+ * @file    app_logic.c
+ * @author  IAmWack
+ * @brief   Слой логики master: единственное место, знающее имена команд протокола.
+ *
+ * Знает команды протокола (SYS_PING, UI_MENU_GET и т.д.) и что с ними
+ * делать. Экраны (master/main/screens/) про протокол не знают — они
+ * дёргают функции отсюда и показывают то, что вернулось. Слой выше —
+ * ui.c, ниже — wackos_protocol.
+ */
 #include "app_logic.h"
 #include "ui.h"
 #include "astolfo.h"
@@ -12,9 +22,17 @@
 
 static const char *TAG = "app_logic";
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 /* Тайм-аут/ретраи запроса — см. docs/PROTOCOL.md ("Тайм-ауты и ретраи"). */
 #define REQ_TIMEOUT_MS 150
 #define REQ_RETRIES    2
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static bool s_online = false;
 static char s_fw[32] = "?";
@@ -30,11 +48,20 @@ static char s_result[WACKOS_PAYLOAD_MAX + 32] = "";
 
 static int s_boot_step = 0;
 
-/*
- * Один запрос к slave со всей обвязкой интерфейса: показать "думаю",
- * замерить время ответа, обновить индикатор связи и настроение
- * Астольфо. Вся реакция системы на "жив ли slave" собрана здесь, чтобы
- * не повторять её в каждом экране.
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/**
+ * @brief   Выполнить один запрос к slave со всей обвязкой интерфейса.
+ * @param   cmd   Имя команды протокола (см. docs/PROTOCOL.md).
+ * @param   args  Аргументы команды либо NULL.
+ * @param   resp  Куда положить кадр ответа.
+ * @return  Статус результата запроса (wackos_status_t).
+ *
+ * Показывает "думаю", замеряет время ответа, обновляет индикатор связи
+ * и настроение Астольфо. Вся реакция системы на "жив ли slave" собрана
+ * здесь, чтобы не повторять её в каждом экране.
  */
 static wackos_status_t ask(const char *cmd, const char *args, wackos_frame_t *resp)
 {
@@ -60,7 +87,13 @@ static wackos_status_t ask(const char *cmd, const char *args, wackos_frame_t *re
     return st;
 }
 
-/* Разложить ответ в s_result и в тост одинаково для всех действий. */
+/**
+ * @brief   Разложить ответ в s_result и в тост одинаково для всех действий.
+ * @param   st     Статус запроса, вернувшийся из ask().
+ * @param   resp   Кадр ответа (используется, если st == WACKOS_RES_OK/REMOTE_ERR).
+ * @param   prefix Префикс, добавляемый перед payload при успехе.
+ * @return  true, если st == WACKOS_RES_OK.
+ */
 static bool finish(wackos_status_t st, const wackos_frame_t *resp, const char *prefix)
 {
     if (st == WACKOS_RES_OK) {
@@ -74,6 +107,13 @@ static bool finish(wackos_status_t st, const wackos_frame_t *resp, const char *p
     return st == WACKOS_RES_OK;
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Сбросить состояние слоя логики (вызывается при старте master).
+ */
 void app_init(void)
 {
     s_boot_step = 0;
@@ -83,12 +123,20 @@ void app_init(void)
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * @brief   Проверить, жив ли slave (команда SYS_PING).
+ * @return  true, если slave ответил OK.
+ */
 bool app_ping(void)
 {
     wackos_frame_t resp;
     return finish(ask("SYS_PING", NULL, &resp), &resp, "");
 }
 
+/**
+ * @brief   Запросить версию протокола и прошивки slave (SYS_VERSION).
+ * @return  true, если slave ответил OK.
+ */
 bool app_read_version(void)
 {
     wackos_frame_t resp;
@@ -111,6 +159,10 @@ bool app_read_version(void)
     return finish(st, &resp, "версия: ");
 }
 
+/**
+ * @brief   Запросить список поддерживаемых команд slave (SYS_CAPS).
+ * @return  true, если slave ответил OK.
+ */
 bool app_read_caps(void)
 {
     wackos_frame_t resp;
@@ -122,6 +174,10 @@ bool app_read_caps(void)
     return finish(st, &resp, "умеет: ");
 }
 
+/**
+ * @brief   Отправить slave команду сброса (SYS_RESET).
+ * @return  Всегда true (ответа на сброс не ждём).
+ */
 bool app_reset_slave(void)
 {
     wackos_frame_t resp;
@@ -133,6 +189,10 @@ bool app_reset_slave(void)
     return true;
 }
 
+/**
+ * @brief   Запросить у slave список модулей меню (UI_MENU_GET) и разобрать его.
+ * @return  true, если список успешно получен и разобран.
+ */
 bool app_refresh_items(void)
 {
     wackos_frame_t resp;
@@ -169,6 +229,11 @@ bool app_refresh_items(void)
     return true;
 }
 
+/**
+ * @brief   Выбрать пункт меню по индексу (UI_MENU_SELECT).
+ * @param   index  Индекс в списке, полученном app_refresh_items().
+ * @return  true, если slave ответил OK.
+ */
 bool app_run_item(size_t index)
 {
     if (index >= s_item_count) {
@@ -180,6 +245,15 @@ bool app_run_item(size_t index)
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * @brief   Выполнить один шаг загрузки (пинг, версия, список модулей...).
+ * @param   out_label    Куда положить подпись текущего шага (может быть NULL).
+ * @param   out_percent  Куда положить прогресс в процентах (может быть NULL).
+ * @return  false, когда загрузка закончена.
+ *
+ * Разбито по шагам, чтобы экран загрузки показывал реальный прогресс,
+ * а не бутафорский прогресс-бар.
+ */
 bool app_boot_step(const char **out_label, int *out_percent)
 {
     static const char *LABELS[] = {
@@ -211,22 +285,34 @@ bool app_boot_step(const char **out_label, int *out_percent)
     return true;
 }
 
+/** @brief  true, если последний обмен со slave прошёл (OK или ERR, не тайм-аут). */
 bool        app_online(void)      { return s_online; }
+/** @brief  Версия прошивки slave, как она сообщила себя в SYS_VERSION. */
 const char *app_slave_fw(void)    { return s_fw; }
+/** @brief  Версия протокола, о которой сообщил slave в SYS_VERSION. */
 const char *app_slave_proto(void) { return s_proto; }
+/** @brief  Список поддерживаемых slave команд через ';' (см. app_read_caps()). */
 const char *app_slave_caps(void)  { return s_caps; }
+/** @brief  Время последнего ответа slave в миллисекундах. */
 uint32_t    app_rtt_ms(void)      { return s_rtt_ms; }
 
+/** @brief  Количество пунктов меню, полученных последним app_refresh_items(). */
 size_t app_item_count(void)
 {
     return s_item_count;
 }
 
+/**
+ * @brief   Получить пункт меню по индексу.
+ * @param   index  Индекс в диапазоне [0, app_item_count()).
+ * @return  Указатель на пункт меню, либо NULL при выходе за диапазон.
+ */
 const slave_item_t *app_item(size_t index)
 {
     return (index < s_item_count) ? &s_items[index] : NULL;
 }
 
+/** @brief  Текст последнего результата действия — то, что показывать на экране. */
 const char *app_last_result(void)
 {
     return s_result;

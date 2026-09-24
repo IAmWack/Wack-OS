@@ -4,3 +4,8 @@ build-cli/
 *.o
 *.elf
 *.bin
+__pycache__/
+sim/wackos-sim
+sim/wackos-test
+sim/astolfo-sheet
+sim/shots/

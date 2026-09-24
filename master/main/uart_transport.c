@@ -1,3 +1,11 @@
+/**
+ * @file    uart_transport.c
+ * @author  IAmWack
+ * @brief   Реализация wackos_transport_t поверх UART для master (ESP32-S3).
+ *
+ * Это единственный файл на стороне master, который знает про UART.
+ * Слой протокола (components/wackos_protocol) про него не знает вообще.
+ */
 #include "uart_transport.h"
 #include "board_pins.h"
 
@@ -6,17 +14,33 @@
 #include "freertos/task.h"
 #include "esp_err.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 #define UART_RX_BUF_SIZE 256
 #define UART_TX_BUF_SIZE 256
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/** @brief  Реализация wackos_transport_t::write поверх uart_write_bytes(). */
 static int transport_write(const uint8_t *data, size_t len)
 {
     return uart_write_bytes(UART_PORT_NUM, (const char *)data, len);
 }
 
-/* Читает строку-кадр байт за байтом до '\n' либо до истечения timeout_ms.
+/**
+ * @brief   Читает строку-кадр байт за байтом до '\n' либо до истечения тайм-аута.
+ * @param   buf         Буфер для результата.
+ * @param   max_len     Размер буфера buf.
+ * @param   timeout_ms  Тайм-аут ожидания всей строки, миллисекунды.
+ * @return  Число прочитанных байт (включая '\n', если он поместился).
+ *
  * Кадры короткие (см. WACKOS_LINE_MAX), так что побайтовое чтение —
- * не узкое место. */
+ * не узкое место.
+ */
 static int transport_read_line(uint8_t *buf, size_t max_len, uint32_t timeout_ms)
 {
     size_t idx = 0;
@@ -47,6 +71,14 @@ static const wackos_transport_t s_uart_transport = {
     .read_line = transport_read_line,
 };
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Настроить UART по board_pins.h и вернуть транспорт для протокола.
+ * @return  Указатель на статический wackos_transport_t для wackos_proto_init().
+ */
 const wackos_transport_t *uart_transport_init(void)
 {
     const uart_config_t cfg = {

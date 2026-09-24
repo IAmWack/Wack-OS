@@ -1,3 +1,12 @@
+/**
+ * @file    uart_transport.c
+ * @author  IAmWack
+ * @brief   Реализация wackos_transport_t поверх UART для slave (ESP32).
+ *
+ * Единственный файл на стороне slave со знанием о UART-драйвере
+ * ESP-IDF. Выше по стеку (components/wackos_protocol) про это не
+ * знают — видят только write()/read_line() (см. docs/ARCHITECTURE.md).
+ */
 #include "uart_transport.h"
 #include "board_pins.h"
 
@@ -6,14 +15,35 @@
 #include "freertos/task.h"
 #include "esp_err.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 #define UART_RX_BUF_SIZE 256
 #define UART_TX_BUF_SIZE 256
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/**
+ * @brief   Отправить сырые байты в UART.
+ * @param   data  Буфер с данными.
+ * @param   len   Длина буфера.
+ * @return  Число фактически записанных байт (см. uart_write_bytes()).
+ */
 static int transport_write(const uint8_t *data, size_t len)
 {
     return uart_write_bytes(UART_PORT_NUM, (const char *)data, len);
 }
 
+/**
+ * @brief   Прочитать одну строку-кадр из UART побайтно, с тайм-аутом.
+ * @param   buf         Буфер для результата.
+ * @param   max_len     Размер буфера buf.
+ * @param   timeout_ms  Тайм-аут ожидания всей строки целиком.
+ * @return  Число прочитанных байт (включая завершающий '\n', если успели).
+ */
 static int transport_read_line(uint8_t *buf, size_t max_len, uint32_t timeout_ms)
 {
     size_t idx = 0;
@@ -39,11 +69,23 @@ static int transport_read_line(uint8_t *buf, size_t max_len, uint32_t timeout_ms
     return (int)idx;
 }
 
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
+
 static const wackos_transport_t s_uart_transport = {
     .write = transport_write,
     .read_line = transport_read_line,
 };
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Настроить UART и вернуть готовый transport для wackos_proto_init().
+ * @return  Указатель на статический экземпляр wackos_transport_t.
+ */
 const wackos_transport_t *uart_transport_init(void)
 {
     const uart_config_t cfg = {

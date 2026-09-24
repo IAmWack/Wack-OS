@@ -1,3 +1,15 @@
+/**
+ * @file    module_encoder.c
+ * @author  IAmWack
+ * @brief   Модуль энкодера KY-040, временно подключённого к slave.
+ *
+ * Опрашивает GPIO энкодера через прерывания, декодирует события общим
+ * декодером components/wackos_encoder и рассылает их кадрами EVT.
+ * Namespace команд: ENC_*, включая набор временных отладочных команд
+ * (ENC_HUNT/ENC_SCAN/ENC_DIAG) для поиска и диагностики проводки —
+ * см. board_pins.h. Подробнее про временное расположение ручки на
+ * slave — см. module_encoder.h.
+ */
 #include "module_encoder.h"
 #include "board_pins.h"
 
@@ -11,8 +23,16 @@
 
 #include "wackos_encoder.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 #define NAMESPACE_PREFIX "ENC_"
 #define QUEUE_LEN 32
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static QueueHandle_t s_queue = NULL;
 static wackos_quad_t s_quad;
@@ -28,6 +48,14 @@ static volatile uint8_t s_longs = 0;
 static volatile uint32_t s_isr_quad = 0;
 static volatile uint32_t s_isr_btn = 0;
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/**
+ * @brief   Положить декодированное событие в очередь и обновить счётчики.
+ * @param   ev  Событие энкодера (WACKOS_ENC_NONE игнорируется).
+ */
 static void IRAM_ATTR post(wackos_encoder_event_t ev)
 {
     if (ev == WACKOS_ENC_NONE) {
@@ -48,6 +76,10 @@ static void IRAM_ATTR post(wackos_encoder_event_t ev)
     }
 }
 
+/**
+ * @brief   ISR фазовых ног CLK/DT — декодирует шаг вращения и постит событие.
+ * @param   arg  Не используется (сигнатура gpio_isr_handler_add()).
+ */
 static void IRAM_ATTR quad_isr(void *arg)
 {
     s_isr_quad++;
@@ -56,6 +88,10 @@ static void IRAM_ATTR quad_isr(void *arg)
                             (uint8_t)gpio_get_level(PIN_ENC_DT)));
 }
 
+/**
+ * @brief   ISR ноги кнопки SW — декодирует клик/долгое нажатие и постит событие.
+ * @param   arg  Не используется (сигнатура gpio_isr_handler_add()).
+ */
 static void IRAM_ATTR btn_isr(void *arg)
 {
     s_isr_btn++;
@@ -64,8 +100,12 @@ static void IRAM_ATTR btn_isr(void *arg)
                            esp_timer_get_time()));
 }
 
-/* Все три ноги — вход с внутренней подтяжкой: KY-040 замыкает их на
- * землю, так что подтяжка обязательна, иначе линии болтаются. */
+/**
+ * @brief   Настроить GPIO CLK/DT/SW энкодера как вход с подтяжкой, прерывание по обоим фронтам.
+ *
+ * Все три ноги — вход с внутренней подтяжкой: KY-040 замыкает их на
+ * землю, так что подтяжка обязательна, иначе линии болтаются.
+ */
 static void configure_pins(void)
 {
     gpio_config_t cfg = {
@@ -79,6 +119,13 @@ static void configure_pins(void)
     gpio_config(&cfg);
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Настроить GPIO энкодера и обработчики прерываний.
+ */
 void module_encoder_init(void)
 {
     s_queue = xQueueCreate(QUEUE_LEN, sizeof(wackos_encoder_event_t));
@@ -95,6 +142,12 @@ void module_encoder_init(void)
     s_btn = (wackos_btn_t){ .pressed = false };
 }
 
+/**
+ * @brief   Разослать накопленные события кадрами EVT.
+ *
+ * Зовётся из главного цикла, чтобы отправка не лезла в середину
+ * чужого кадра.
+ */
 void module_encoder_pump(void)
 {
     wackos_encoder_event_t ev;
@@ -104,11 +157,20 @@ void module_encoder_pump(void)
     }
 }
 
+/**
+ * @brief   Проверить, относится ли команда к namespace ENC_.
+ * @param   cmd  Имя команды из кадра REQ.
+ * @return  true, если cmd начинается с "ENC_".
+ */
 bool module_encoder_owns(const char *cmd)
 {
     return strncmp(cmd, NAMESPACE_PREFIX, strlen(NAMESPACE_PREFIX)) == 0;
 }
 
+/**
+ * @brief   Обработать команду namespace ENC_ (ENC_GET, ENC_HUNT, ENC_SCAN, ENC_DIAG).
+ * @param   request  Входящий запрос.
+ */
 void module_encoder_handle(const wackos_frame_t *request)
 {
     /*

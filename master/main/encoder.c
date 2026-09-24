@@ -1,3 +1,13 @@
+/**
+ * @file    encoder.c
+ * @author  IAmWack
+ * @brief   Драйвер энкодера KY-040 на стороне master (GPIO + ISR).
+ *
+ * Здесь только железо: настроить ноги, поймать прерывание, отдать
+ * состояние ног общему декодеру (components/wackos_encoder) и сложить
+ * его вердикт в очередь. Вся логика "что считать щелчком" — в
+ * wackos_encoder, этот файл лишь мост между GPIO и ней.
+ */
 #include "encoder.h"
 #include "board_pins.h"
 
@@ -6,15 +16,19 @@
 #include "freertos/queue.h"
 #include "esp_timer.h"
 
-/*
- * Здесь только железо: настроить ноги, поймать прерывание, отдать
- * состояние ног общему декодеру (components/wackos_encoder) и сложить
- * его вердикт в очередь. Вся логика "что считать щелчком" — там.
- */
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
+
 static QueueHandle_t s_event_queue = NULL;
 static wackos_quad_t s_quad;
 static wackos_btn_t  s_btn;
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/** @brief  Положить событие энкодера в очередь из контекста ISR. */
 static void IRAM_ATTR post(wackos_encoder_event_t ev)
 {
     if (ev == WACKOS_ENC_NONE) {
@@ -27,6 +41,7 @@ static void IRAM_ATTR post(wackos_encoder_event_t ev)
     }
 }
 
+/** @brief  ISR на фронт CLK/DT: обновить квадратурный декодер. */
 static void IRAM_ATTR encoder_quad_isr(void *arg)
 {
     post(wackos_quad_update(&s_quad,
@@ -34,6 +49,7 @@ static void IRAM_ATTR encoder_quad_isr(void *arg)
                             (uint8_t)gpio_get_level(PIN_ENC_DT)));
 }
 
+/** @brief  ISR на фронт SW: обновить состояние кнопки. */
 static void IRAM_ATTR encoder_btn_isr(void *arg)
 {
     /* Кнопка подтянута к питанию: 0 — нажата. */
@@ -41,6 +57,13 @@ static void IRAM_ATTR encoder_btn_isr(void *arg)
                            esp_timer_get_time()));
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Настроить GPIO энкодера, повесить обработчики прерываний.
+ */
 void encoder_init(void)
 {
     s_event_queue = xQueueCreate(16, sizeof(wackos_encoder_event_t));
@@ -71,6 +94,12 @@ void encoder_init(void)
     s_btn = (wackos_btn_t){ .pressed = false };
 }
 
+/**
+ * @brief   Неблокирующе (с тайм-аутом) получить следующее событие энкодера.
+ * @param   out_event    Куда положить событие.
+ * @param   timeout_ms   Сколько ждать событие, миллисекунды.
+ * @return  true, если событие было получено за timeout_ms.
+ */
 bool encoder_poll(wackos_encoder_event_t *out_event, uint32_t timeout_ms)
 {
     return xQueueReceive(s_event_queue, out_event, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;

@@ -1,10 +1,12 @@
-/*
- * Общие виджеты интерфейса: карточка, иконки, список, блок текста,
- * облачко с репликой.
+/**
+ * @file    ui_widgets.c
+ * @author  IAmWack
+ * @brief   Общие виджеты интерфейса: карточка, иконки, список, текст, облачко.
  *
  * Смысл в том, чтобы экраны занимались содержанием, а не пикселями:
  * все списки в системе листаются, подсвечиваются и прокручиваются
- * одинаково, потому что это один и тот же код.
+ * одинаково, потому что это один и тот же код. Публичные функции этого
+ * файла объявлены в ui_screen.h.
  */
 #include "ui_screen.h"
 #include "theme.h"
@@ -13,6 +15,11 @@
 #include <math.h>
 #include <string.h>
 
+/* ============================================================================
+ *  Static helpers
+ * ============================================================================ */
+
+/** @brief  Плавная пульсация [0..1] с заданным периодом и фазой (синус). */
 static float pulse(uint32_t t_ms, float period_ms, float phase)
 {
     return 0.5f + 0.5f * sinf((float)t_ms / period_ms * 6.2831853f + phase);
@@ -24,6 +31,11 @@ static float approach(float a, float b, float dt_ms, float speed)
     return a + (b - a) * (1.0f - expf(-speed * dt_ms / 1000.0f));
 }
 
+/* ============================================================================
+ *  Public API — карточка и иконки
+ * ============================================================================ */
+
+/** @brief  Карточка со скруглениями и тенью — основа всех экранов. */
 void ui_card(int x, int y, int w, int h, uint8_t alpha)
 {
     gfx_round_rect(x + 1, y + 3, w, h, 16, TH->shadow, 34);
@@ -32,6 +44,14 @@ void ui_card(int x, int y, int w, int h, uint8_t alpha)
     gfx_round_rect_outline(x, y, w, h, 16, 2, TH->card_edge, 200);
 }
 
+/**
+ * @brief   Иконка размером s с центром в (cx, cy).
+ * @param   icon   Какую иконку рисовать (см. ui_icon_t).
+ * @param   cx,cy  Центр иконки.
+ * @param   s      Размер иконки.
+ * @param   color  Цвет.
+ * @param   alpha  Непрозрачность 0..255.
+ */
 void ui_icon(ui_icon_t icon, int cx, int cy, int s, uint16_t color, uint8_t alpha)
 {
     switch (icon) {
@@ -74,6 +94,7 @@ void ui_icon(ui_icon_t icon, int cx, int cy, int s, uint16_t color, uint8_t alph
 /* Список                                                              */
 /* ------------------------------------------------------------------ */
 
+/** @brief  Инициализировать список: сбросить состояние на count пунктов. */
 void ui_list_init(ui_list_t *l, size_t count, int visible_rows, int row_h)
 {
     l->count = count;
@@ -88,6 +109,11 @@ void ui_list_init(ui_list_t *l, size_t count, int visible_rows, int row_h)
     l->last_ms = 0;
 }
 
+/**
+ * @brief   Сдвинуть выделение в списке на delta пунктов, по кругу.
+ * @param   l      Список.
+ * @param   delta  Смещение (может быть отрицательным).
+ */
 void ui_list_move(ui_list_t *l, int delta)
 {
     if (l->count == 0) {
@@ -101,6 +127,13 @@ void ui_list_move(ui_list_t *l, int delta)
     l->selected = (size_t)(next % (long)l->count);
 }
 
+/**
+ * @brief   Нарисовать список: выделение, плавная прокрутка, полоска справа.
+ * @param   l    Список.
+ * @param   y0   Верх области списка по Y.
+ * @param   row  Колбэк, заполняющий содержимое строки по индексу.
+ * @param   t    Текущее время, для анимаций (пульсация выделения и т.п.).
+ */
 void ui_list_draw(ui_list_t *l, int y0, ui_row_fn row, uint32_t t)
 {
     int pitch = l->row_h + ROW_GAP;
@@ -212,7 +245,16 @@ void ui_list_draw(ui_list_t *l, int y0, ui_row_fn row, uint32_t t)
 /* Текст блоком и облачко                                              */
 /* ------------------------------------------------------------------ */
 
-/* Перенос по словам: возвращает остаток строки либо NULL. */
+/**
+ * @brief   Перенос по словам: скопировать в out кусок текста, влезающий в max_w.
+ * @param   f         Шрифт.
+ * @param   text      Исходный текст.
+ * @param   max_w     Доступная ширина в пикселях.
+ * @param   out       Буфер для строки, которая влезла.
+ * @param   out_size  Размер буфера out.
+ * @return  Указатель на остаток text после перенесённой части, либо NULL,
+ *          если весь текст поместился.
+ */
 static const char *wrap_word(const wackos_font_t *f, const char *text, int max_w,
                              char *out, size_t out_size)
 {
@@ -267,6 +309,20 @@ static const char *wrap_word(const wackos_font_t *f, const char *text, int max_w
     return *rest ? rest : NULL;
 }
 
+/* ============================================================================
+ *  Public API — текст блоком и облачко
+ * ============================================================================ */
+
+/**
+ * @brief   Текст с переносом по словам.
+ * @param   f          Шрифт.
+ * @param   x, y       Позиция первой строки.
+ * @param   w          Доступная ширина в пикселях.
+ * @param   max_lines  Максимум строк.
+ * @param   text       Текст.
+ * @param   color      Цвет текста.
+ * @return  Число нарисованных строк.
+ */
 int ui_text_block(const wackos_font_t *f, int x, int y, int w, int max_lines,
                   const char *text, uint16_t color)
 {
@@ -281,6 +337,14 @@ int ui_text_block(const wackos_font_t *f, int x, int y, int w, int max_lines,
     return line;
 }
 
+/**
+ * @brief   Строка "поле ....... значение" внутри карточки.
+ * @param   x, y   Позиция строки.
+ * @param   w      Доступная ширина.
+ * @param   label  Подпись слева.
+ * @param   value  Значение справа (обрезается многоточием, если не влезает).
+ * @param   color  Цвет значения.
+ */
 void ui_info_line(int x, int y, int w, const char *label, const char *value,
                   uint16_t color)
 {
@@ -297,6 +361,12 @@ void ui_info_line(int x, int y, int w, const char *label, const char *value,
     }
 }
 
+/**
+ * @brief   Облачко с репликой (хвостик вниз-влево, к Астольфо).
+ * @param   x, y  Верхний левый угол облачка.
+ * @param   w     Ширина облачка.
+ * @param   text  Текст реплики (переносится по словам, максимум 2 строки).
+ */
 void ui_bubble(int x, int y, int w, const char *text)
 {
     const wackos_font_t *f = &wackos_font_small;

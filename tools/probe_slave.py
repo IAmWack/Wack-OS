@@ -4,6 +4,8 @@
 и печатаем, что он ответил. Нужна, чтобы отделить "плата молчит" от
 "симулятор неправильно говорит" — до того, как лезть в UI.
 
+Author: IAmWack
+
     python3 tools/probe_slave.py [/dev/ttyUSB0]
     python3 tools/probe_slave.py /dev/ttyUSB0 --listen   # слушать EVT с энкодера
 """

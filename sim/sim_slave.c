@@ -1,5 +1,7 @@
-/*
- * Фальшивый slave: та самая плата, которой пока нет на столе.
+/**
+ * @file    sim_slave.c
+ * @author  IAmWack
+ * @brief   Фальшивый slave: та самая плата, которой пока нет на столе.
  *
  * Важно, что здесь НЕ переписана логика slave заново — этот файл лишь
  * крутит цикл приёма, а команды разбирает настоящий slave/main/
@@ -19,6 +21,10 @@
 #include "wackos_protocol.h"
 #include "dispatcher.h"
 
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
+
 /*
  * Сколько slave "молчит" после SYS_RESET, изображая перезагрузку.
  * Не выдумано: столько живая плата ESP32 не отвечает по замеру
@@ -28,9 +34,18 @@
  */
 #define REBOOT_SILENCE_MS 600
 
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
+
 static bool s_connected = true;
 static uint32_t s_mute_until = 0;
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/** @brief Поднять фальшивый slave: своя копия слоя протокола на внутрипроцессном транспорте. */
 void sim_slave_init(void)
 {
     wackos_proto_init(sim_transport_slave()); /* -> slv_proto_init, см. Makefile */
@@ -40,27 +55,32 @@ void sim_slave_init(void)
     s_mute_until = 0;
 }
 
+/** @brief Имитировать физическое (от)подключение slave (клавиша O). @param connected false — кадры пропадают в проводе. */
 void sim_slave_set_connected(bool connected)
 {
     s_connected = connected;
 }
 
+/** @brief Подключён ли сейчас фальшивый slave. @return Текущее состояние. */
 bool sim_slave_connected(void)
 {
     return s_connected;
 }
 
+/** @brief "Перезагрузка": включить REBOOT_SILENCE_MS тишины (вызывается esp_restart() из sim_platform.c). */
 void sim_slave_reboot(void)
 {
     s_mute_until = sim_now_ms() + REBOOT_SILENCE_MS;
     printf("[sim] slave перезагружается (%d мс тишины)\n", REBOOT_SILENCE_MS);
 }
 
+/** @brief В процессе ли имитация перезагрузки прямо сейчас. @return true, пока не истекло время тишины. */
 bool sim_slave_muted(void)
 {
     return sim_now_ms() < s_mute_until;
 }
 
+/** @brief Дать slave обработать всё, что прилетело по проводу (разбор через dispatcher_handle()). */
 void sim_slave_pump(void)
 {
     wackos_frame_t request;

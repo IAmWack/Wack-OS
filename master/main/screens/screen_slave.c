@@ -1,7 +1,11 @@
-/*
- * Экран состояния slave: кто на том конце провода и что с ним можно
- * сделать. Всё, что тут написано, master узнал по протоколу — никакой
- * зашитой информации о конкретной плате здесь нет.
+/**
+ * @file    screen_slave.c
+ * @author  IAmWack
+ * @brief   Экран состояния slave: кто на связи и что с ним можно сделать.
+ *
+ * Всё, что тут написано, master узнал по протоколу — никакой зашитой
+ * информации о конкретной плате здесь нет. Реализует контракт
+ * ui_screen_t (см. ui_screen.h).
  */
 #include "ui.h"
 #include "ui_screen.h"
@@ -11,6 +15,10 @@
 #include <stdio.h>
 #include <string.h>
 
+/* ============================================================================
+ *  Types
+ * ============================================================================ */
+
 typedef enum {
     ACT_PING = 0,
     ACT_REFRESH,
@@ -18,6 +26,10 @@ typedef enum {
     ACT_RESET,
     ACT_COUNT,
 } action_t;
+
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
 
 static const char *ACTION_NAMES[ACT_COUNT] = {
     "Пинг",
@@ -28,17 +40,31 @@ static const char *ACTION_NAMES[ACT_COUNT] = {
 
 static ui_list_t s_list;
 
+/* ============================================================================
+ *  Screen callbacks (ui_screen_t)
+ * ============================================================================ */
+
+/** @brief  Инициализировать список действий над slave. */
 static void enter(void)
 {
     ui_list_init(&s_list, ACT_COUNT, 4, 26);
 }
 
+/**
+ * @brief   Заполнить одну строку списка названием и иконкой действия.
+ * @param   index  Индекс действия (action_t).
+ * @param   out    Строка списка для заполнения (title, icon).
+ */
 static void row(size_t index, ui_row_t *out)
 {
     strncpy(out->title, ACTION_NAMES[index], sizeof(out->title) - 1);
     out->icon = (index == ACT_RESET) ? UI_ICON_PLUG : UI_ICON_HEART;
 }
 
+/**
+ * @brief   Отрисовать карточку статуса связи и список доступных действий.
+ * @param   t  Текущее время кадра (мс).
+ */
 static void draw(uint32_t t)
 {
     ui_card(8, CONTENT_Y, GFX_W - 16, 88, 235);
@@ -60,6 +86,11 @@ static void draw(uint32_t t)
     ui_list_draw(&s_list, CONTENT_Y + 100, row, t);
 }
 
+/**
+ * @brief   Обработать ввод: прокрутка списка действий и запуск
+ *          выбранного (пинг / обновить модули / что умеет / сброс).
+ * @param   in  Событие энкодера.
+ */
 static void input(ui_input_t in)
 {
     switch (in) {
@@ -82,6 +113,11 @@ static void input(ui_input_t in)
     }
 }
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/** @brief  Таблица экрана состояния slave для роутера ui.c. */
 const ui_screen_t screen_slave = {
     .title = "Slave",
     .enter = enter,

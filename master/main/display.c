@@ -1,3 +1,14 @@
+/**
+ * @file    display.c
+ * @author  IAmWack
+ * @brief   Слой дисплея master: инициализация ST7789 (SPI) и вывод кадра.
+ *
+ * Знает про ST7789/SPI — и больше ни про что. Рисование сюда не входит:
+ * весь рендер идёт в кадровый буфер wackos_gfx (components/wackos_gfx),
+ * а display отвечает только за то, чтобы готовый кадр оказался на
+ * матрице. По этой же границе проходит подмена в симуляторе:
+ * sim/sim_display.c реализует те же функции, выводя кадр в окно.
+ */
 #include "display.h"
 #include "board_pins.h"
 
@@ -10,6 +21,10 @@
 #include "esp_log.h"
 
 static const char *TAG = "display";
+
+/* ============================================================================
+ *  Defines / Macros
+ * ============================================================================ */
 
 #define LCD_SPI_HOST        SPI2_HOST
 #define LCD_PIXEL_CLOCK_HZ  (40 * 1000 * 1000)
@@ -26,9 +41,20 @@ static const char *TAG = "display";
 #define BL_TIMER    LEDC_TIMER_0
 #define BL_CHANNEL  LEDC_CHANNEL_0
 
+/* ============================================================================
+ *  Static state
+ * ============================================================================ */
+
 static esp_lcd_panel_handle_t s_panel = NULL;
 static esp_lcd_panel_io_handle_t s_io = NULL;
 
+/* ============================================================================
+ *  Public API
+ * ============================================================================ */
+
+/**
+ * @brief   Инициализировать SPI-шину, панель ST7789 и подсветку (ШИМ).
+ */
 void display_init(void)
 {
     /* Подсветка через ШИМ (LEDC), а не просто "включить". */
@@ -97,6 +123,10 @@ void display_init(void)
     ESP_LOGI(TAG, "ST7789 инициализирован: %dx%d", LCD_WIDTH, LCD_HEIGHT);
 }
 
+/**
+ * @brief   Установить яркость подсветки.
+ * @param   percent  Яркость 0..100 % (значения выше 100 обрезаются).
+ */
 void display_set_brightness(uint8_t percent)
 {
     if (percent > 100) {
@@ -106,6 +136,9 @@ void display_set_brightness(uint8_t percent)
     ledc_update_duty(LEDC_LOW_SPEED_MODE, BL_CHANNEL);
 }
 
+/**
+ * @brief   Отправить текущий кадровый буфер gfx на экран целиком.
+ */
 void display_flush(void)
 {
     if (!s_panel) {
