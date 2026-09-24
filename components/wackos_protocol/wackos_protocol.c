@@ -36,7 +36,7 @@ static wackos_frame_t s_pending_event;
 static bool s_has_pending_event = false;
 
 /* ============================================================================
- *  Static helpers
+ *  Static helpers — время, контрольная сумма, роль кадра
  * ============================================================================ */
 
 /**
@@ -79,7 +79,7 @@ static bool str_to_role(const char *s, wackos_role_t *out)
 }
 
 /* ============================================================================
- *  Public API
+ *  Public API — адрес, инициализация, сериализация кадров
  * ============================================================================ */
 
 /** @brief  Задать собственный адрес (см. пояснение в wackos_protocol.h). */
@@ -194,6 +194,10 @@ wackos_parse_result_t wackos_frame_parse(const char *line, size_t line_len, wack
     return crc_ok ? WACKOS_PARSE_OK : WACKOS_PARSE_CRC_FAIL;
 }
 
+/* ============================================================================
+ *  Static helpers — отправка/чтение кадра через транспорт
+ * ============================================================================ */
+
 /** @brief  Собрать и отправить кадр через текущий транспорт (no-op, если транспорт не задан). */
 static void send_frame(const wackos_frame_t *frame)
 {
@@ -204,7 +208,7 @@ static void send_frame(const wackos_frame_t *frame)
     }
 }
 
-/* Прочитать одну строку-кадр из транспорта с заданным тайм-аутом. */
+/** @brief  Прочитать одну строку-кадр из транспорта с заданным тайм-аутом. */
 static wackos_parse_result_t read_frame(wackos_frame_t *out, uint32_t timeout_ms)
 {
     if (!s_transport || !s_transport->read_line) {

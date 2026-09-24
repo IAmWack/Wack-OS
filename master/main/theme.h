@@ -17,6 +17,24 @@
 #include "wackos_gfx.h"
 
 /* ============================================================================
+ *  Defines / Macros — геометрия экрана
+ * ============================================================================ */
+
+#define EAR_H          15
+#define HEADER_Y       16   /* шапка сдвинута вниз: над ней живут ушки */
+#define HEADER_H       34
+#define CONTENT_Y      56
+#define CONTENT_H      (HINT_Y - CONTENT_Y - 4)
+#define HINT_Y         (GFX_H - 22)   /* строка подсказок по кнопкам */
+
+/* Список пунктов (общий для всех экранов-списков). */
+#define LIST_X         8
+#define LIST_W         (GFX_W - 2 * LIST_X - 8) /* -8 — полоска прокрутки */
+#define ROW_H          28
+#define ROW_GAP        4
+#define ROW_PITCH      (ROW_H + ROW_GAP)
+
+/* ============================================================================
  *  Types
  * ============================================================================ */
 
@@ -57,21 +75,3 @@ size_t      theme_index(void);
 void        theme_set(size_t index);
 /** @brief  Название темы по индексу. */
 const char *theme_name(size_t index);
-
-/* ============================================================================
- *  Defines / Macros — геометрия экрана
- * ============================================================================ */
-
-#define EAR_H          15
-#define HEADER_Y       16   /* шапка сдвинута вниз: над ней живут ушки */
-#define HEADER_H       34
-#define CONTENT_Y      56
-#define CONTENT_H      (HINT_Y - CONTENT_Y - 4)
-#define HINT_Y         (GFX_H - 22)   /* строка подсказок по кнопкам */
-
-/* Список пунктов (общий для всех экранов-списков). */
-#define LIST_X         8
-#define LIST_W         (GFX_W - 2 * LIST_X - 8) /* -8 — полоска прокрутки */
-#define ROW_H          28
-#define ROW_GAP        4
-#define ROW_PITCH      (ROW_H + ROW_GAP)
