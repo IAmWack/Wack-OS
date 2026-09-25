@@ -8,6 +8,7 @@ Author: IAmWack
 
     python3 tools/probe_slave.py [/dev/ttyUSB0]
     python3 tools/probe_slave.py /dev/ttyUSB0 --listen   # слушать EVT с энкодера
+    python3 tools/probe_slave.py /dev/ttyUSB0 --uart1-test   # самотест UART1 (TX_REAL/RX_REAL замкнуты перемычкой)
 """
 import sys
 import time
@@ -56,6 +57,15 @@ def main():
 
     if "--listen" in sys.argv:
         listen(ser)
+        ser.close()
+        return
+
+    if "--uart1-test" in sys.argv:
+        req = frame("SYS_UART1_TEST", 1)
+        ser.write(req)
+        print("->", req.decode().rstrip())
+        line = ser.readline()
+        print("<-", line.decode(errors="replace").rstrip() if line else "(тишина)")
         ser.close()
         return
 

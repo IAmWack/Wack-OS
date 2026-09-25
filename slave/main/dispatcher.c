@@ -14,6 +14,7 @@
 #include "modules/module_sensor.h"
 #include "modules/module_encoder.h"
 #include "board_pins.h"
+#include "uart_transport.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -148,6 +149,27 @@ static void handle_sys_led(const wackos_frame_t *req)
 }
 
 /**
+ * @brief   Обработчик SYS_UART1_TEST — временная команда самотеста UART_NUM_1.
+ * @param   req  Входящий запрос SYS_UART1_TEST.
+ *
+ * Не часть протокола v1. Нужна, чтобы проверить GPIO16/17
+ * (PIN_UART_TX_REAL/PIN_UART_RX_REAL) до появления master: команда
+ * приходит по рабочему протокольному UART0, а сама проверка идёт по
+ * UART1 — требует, чтобы TX_REAL и RX_REAL были физически замкнуты
+ * перемычкой (самозамыкание) на макетке.
+ */
+static void handle_sys_uart1_test(const wackos_frame_t *req)
+{
+    char result[WACKOS_PAYLOAD_MAX];
+    bool ok = uart_transport_uart1_selftest(result, sizeof(result));
+    if (ok) {
+        wackos_proto_send_ok(req, result);
+    } else {
+        wackos_proto_send_err(req, result); /* result уже начинается с "FAIL ..." */
+    }
+}
+
+/**
  * @brief   Обработчик UI_MENU_GET — отдаёт список пунктов меню MENU.
  * @param   req  Входящий запрос UI_MENU_GET.
  */
@@ -200,6 +222,7 @@ void dispatcher_handle(const wackos_frame_t *request)
     if (strcmp(cmd, "SYS_CAPS") == 0)       { handle_sys_caps(request);       return; }
     if (strcmp(cmd, "SYS_RESET") == 0)      { handle_sys_reset(request);      return; }
     if (strcmp(cmd, "SYS_LED") == 0)        { handle_sys_led(request);        return; }
+    if (strcmp(cmd, "SYS_UART1_TEST") == 0) { handle_sys_uart1_test(request);  return; }
     if (strcmp(cmd, "UI_MENU_GET") == 0)    { handle_ui_menu_get(request);    return; }
     if (strcmp(cmd, "UI_MENU_SELECT") == 0) { handle_ui_menu_select(request); return; }
 
